@@ -1,0 +1,19 @@
+{
+  "name": "ipi",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx packages/cli/src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "bin": {
+    "ipi": "dist/packages/cli/src/main.js"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.0"
+  }
+}

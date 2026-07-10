@@ -1,0 +1,71 @@
+Unicode true
+
+!define APP_NAME "ipi"
+!define APP_PUBLISHER "ipi"
+!define APP_VERSION "@@APP_VERSION@@"
+!define SOURCE_APP_DIR "@@SOURCE_APP_DIR@@"
+!define OUTPUT_EXE "@@OUTPUT_EXE@@"
+
+!include "MUI2.nsh"
+
+Name "${APP_NAME}"
+OutFile "${OUTPUT_EXE}"
+InstallDir "$LOCALAPPDATA\ipi"
+InstallDirRegKey HKCU "Software\ipi" "InstallDir"
+RequestExecutionLevel user
+BrandingText "ipi"
+
+!define MUI_ABORTWARNING
+!define MUI_ICON "${SOURCE_APP_DIR}\Assets\Brand\app\ipi-icon.ico"
+!define MUI_UNICON "${SOURCE_APP_DIR}\Assets\Brand\app\ipi-icon.ico"
+!define MUI_FINISHPAGE_RUN "$INSTDIR\ipi.exe"
+!define MUI_FINISHPAGE_RUN_PARAMETERS "--setup --post-install"
+!define MUI_FINISHPAGE_RUN_TEXT "Launch ipi setup"
+
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+
+!insertmacro MUI_LANGUAGE "English"
+
+Section "Install"
+  SetOutPath "$INSTDIR"
+  File /r "${SOURCE_APP_DIR}\*.*"
+
+  WriteRegStr HKCU "Software\ipi" "InstallDir" "$INSTDIR"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\ipi" "DisplayName" "ipi"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\ipi" "DisplayVersion" "${APP_VERSION}"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\ipi" "Publisher" "${APP_PUBLISHER}"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\ipi" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\ipi" "DisplayIcon" "$INSTDIR\ipi.exe"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\ipi" "UninstallString" '"$INSTDIR\Uninstall ipi.exe"'
+  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\ipi" "NoModify" 1
+  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\ipi" "NoRepair" 1
+
+  CreateDirectory "$SMPROGRAMS\ipi"
+  CreateShortcut "$SMPROGRAMS\ipi\ipi.lnk" "$INSTDIR\ipi.exe"
+  CreateShortcut "$SMPROGRAMS\ipi\Setup ipi.lnk" "$INSTDIR\ipi.exe" "--setup --post-install"
+  CreateShortcut "$SMPROGRAMS\ipi\Uninstall ipi.lnk" "$INSTDIR\Uninstall ipi.exe"
+  CreateShortcut "$DESKTOP\ipi.lnk" "$INSTDIR\ipi.exe"
+
+  WriteUninstaller "$INSTDIR\Uninstall ipi.exe"
+SectionEnd
+
+Section "Uninstall"
+  Delete "$DESKTOP\ipi.lnk"
+  Delete "$SMPROGRAMS\ipi\ipi.lnk"
+  Delete "$SMPROGRAMS\ipi\Setup ipi.lnk"
+  Delete "$SMPROGRAMS\ipi\Uninstall ipi.lnk"
+  RMDir "$SMPROGRAMS\ipi"
+
+  DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\ipi"
+  DeleteRegKey HKCU "Software\ipi"
+
+@@UNINSTALL_DELETE_COMMANDS@@
+
+  RMDir "$INSTDIR"
+SectionEnd

@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+
+# .NET / WPF build outputs
+bin/
+obj/
+
+# Release artifacts generated locally
+/dist/
+*.nupkg
+*.snupkg
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local runtime/config files
+.env
+.env.*
+!.env.example
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# ipi local runtime/config files (may contain local paths or provider settings)
+**/ipi-paths.json
+**/runtime.json
+**/workspace.json
+**/ui-settings.json
+**/settings.json
+**/*.local.json
+**/*.runtime.json
+
+# IDE folders
+.vs/
+.vscode/.ropeproject
+.idea/
+
+# Test/sandbox output
+coverage/
+TestResults/
+artifacts/

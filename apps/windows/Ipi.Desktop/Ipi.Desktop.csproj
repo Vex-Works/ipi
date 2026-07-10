@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>ipi</AssemblyName>
+    <ApplicationIcon>Assets\Brand\app\ipi-icon.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="agent-bridge.mjs" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="package-bridge.mjs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Brand\export\black\ipi-all-black.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Brand\export\black\ipi-word-black.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Brand\export\black\ipi-icon-black.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Brand\export\white\ipi-icon-white.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Brand\app\ipi-icon.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4078.44" />
+  </ItemGroup>
+</Project>
