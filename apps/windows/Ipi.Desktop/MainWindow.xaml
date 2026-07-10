@@ -1690,9 +1690,9 @@
         </Grid>
       </Border>
 
-      <Grid Grid.Row="1" Margin="0,12,0,18">
+      <Grid Grid.Row="1" Margin="0,12,0,18" ClipToBounds="True">
         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="38" /><ColumnDefinition Width="14" /></Grid.ColumnDefinitions>
-        <ListBox x:Name="ChatItemsControl" Grid.Column="0" ItemsSource="{Binding ContentRows}" Margin="18,0,8,0" Background="Transparent" BorderThickness="0" Padding="0" Focusable="False" ScrollViewer.VerticalScrollBarVisibility="Hidden" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="False" VirtualizingPanel.IsVirtualizing="False" VirtualizingPanel.VirtualizationMode="Standard" VirtualizingPanel.ScrollUnit="Pixel" Loaded="ChatItemsControl_Loaded" ScrollViewer.ScrollChanged="ChatScrollViewer_ScrollChanged">
+        <ListBox x:Name="ChatItemsControl" Grid.Column="0" ItemsSource="{Binding ContentRows}" Margin="18,0,8,0" Background="Transparent" BorderThickness="0" Padding="0" Focusable="False" ClipToBounds="True" ScrollViewer.VerticalScrollBarVisibility="Hidden" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="False" VirtualizingPanel.IsVirtualizing="False" VirtualizingPanel.VirtualizationMode="Standard" VirtualizingPanel.ScrollUnit="Pixel" Loaded="ChatItemsControl_Loaded" ScrollViewer.ScrollChanged="ChatScrollViewer_ScrollChanged">
           <ListBox.ItemsPanel>
             <ItemsPanelTemplate>
               <VirtualizingStackPanel />

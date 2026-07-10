@@ -31,6 +31,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public event Action? RequestWindowsDictationToggle;
     public event Action? RequestScrollChatToLatest;
     private bool _isAgentRunning;
+    private int _runVersion;
     private CancellationTokenSource? _runCancellation;
     private readonly HashSet<string> _runAllowedTools = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _sessionLoadCancellation;
@@ -1338,11 +1339,13 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         PromptText = string.Empty;
 
         var continuing = !string.IsNullOrWhiteSpace(sessionFileForRun) && ContentRows.Count > 0;
+        var runVersion = ++_runVersion;
+        var runCancellation = new CancellationTokenSource();
         IsAgentRunning = true;
         _runStartedAt = DateTime.Now;
         _runElapsedTimer.Start();
         _runAllowedTools.Clear();
-        _runCancellation = new CancellationTokenSource();
+        _runCancellation = runCancellation;
         IsChatMode = true;
         IsStartActionsVisible = false;
         CanReturnToChat = false;
@@ -1372,13 +1375,14 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         {
             var runCwd = ResolveRunCwd();
             ClearPendingEditFromHere(false);
-            var result = await _agentBridge.RunPromptAsync(runCwd, _pi.AgentDir, agentMessage, AddBridgeEvent, sessionFileForRun, ThinkingLevel, toolConfig.Tools, toolConfig.NoTools, RequestToolApprovalAsync, ApprovalModeKey(), ApprovalRulesForBridge(), branchFromEntryId: branchFromEntryId, provider: _activeProvider, model: _activeModel, cancellationToken: _runCancellation.Token);
+            var result = await _agentBridge.RunPromptAsync(runCwd, _pi.AgentDir, agentMessage, evt => AddBridgeEvent(runVersion, evt), sessionFileForRun, ThinkingLevel, toolConfig.Tools, toolConfig.NoTools, RequestToolApprovalAsync, ApprovalModeKey(), ApprovalRulesForBridge(), branchFromEntryId: branchFromEntryId, provider: _activeProvider, model: _activeModel, cancellationToken: runCancellation.Token);
             await SwitchToUiAsync();
+            if (!IsCurrentRun(runVersion)) return;
             RemoveLiveStatusRows();
             var finalText = !string.IsNullOrWhiteSpace(result.FinalText)
                 ? TrimForRow(result.FinalText, 8000)
                 : L("Agent 已完成，但没有返回文本。可从侧边栏打开保存的会话查看完整记录。", "Agent finished without a text response. Open the saved session from the sidebar for full details.");
-            await RevealAssistantMessageAsync(finalText, _runCancellation.Token);
+            await RevealAssistantMessageAsync(finalText, runCancellation.Token);
             if (!string.IsNullOrWhiteSpace(result.SessionFile)) _activeSessionFile = result.SessionFile;
             StatusText = string.IsNullOrWhiteSpace(result.SessionId) ? "agent finished" : $"agent finished · {result.SessionId}";
             SessionStatsText = L("就绪", "Ready");
@@ -1391,26 +1395,35 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         catch (OperationCanceledException)
         {
             await SwitchToUiAsync();
-            RemoveLiveStatusRows();
-            ContentRows.Add(new("state", L("Agent 已停止", "Agent run stopped"), L("本轮生成已停止。", "This run has stopped."), null, "message"));
-            StatusText = "agent stopped";
-            SessionStatsText = L("已停止", "Stopped");
+            if (IsCurrentRun(runVersion))
+            {
+                RemoveLiveStatusRows();
+                ContentRows.Add(new("state", L("Agent 已停止", "Agent run stopped"), L("本轮生成已停止。", "This run has stopped."), null, "message"));
+                StatusText = "agent stopped";
+                SessionStatsText = L("已停止", "Stopped");
+            }
         }
         catch (Exception ex)
         {
             await SwitchToUiAsync();
-            RemoveLiveStatusRows();
-            ContentRows.Add(new("error", "Local agent failed", ex.Message, null, "message"));
-            StatusText = "agent failed";
-            SessionStatsText = "error";
+            if (IsCurrentRun(runVersion))
+            {
+                RemoveLiveStatusRows();
+                ContentRows.Add(new("error", "Local agent failed", ex.Message, null, "message"));
+                StatusText = "agent failed";
+                SessionStatsText = "error";
+            }
         }
         finally
         {
-            _runElapsedTimer.Stop();
-            IsAgentRunning = false;
-            _runCancellation?.Dispose();
-            _runCancellation = null;
-            ToolApprovalRequests.Clear();
+            if (IsCurrentRun(runVersion))
+            {
+                _runElapsedTimer.Stop();
+                IsAgentRunning = false;
+                if (ReferenceEquals(_runCancellation, runCancellation)) _runCancellation = null;
+                ToolApprovalRequests.Clear();
+            }
+            runCancellation.Dispose();
         }
     }
 
@@ -1517,7 +1530,27 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         LoadHome();
     }
 
-    public void NewConversation() => LoadHome();
+    private bool IsCurrentRun(int runVersion) => runVersion == _runVersion;
+
+    private void CancelActiveRunForNewConversation()
+    {
+        if (!IsAgentRunning && _runCancellation is null) return;
+        _runVersion++;
+        try { _runCancellation?.Cancel(); } catch { }
+        _runElapsedTimer.Stop();
+        _liveStatusTitle = string.Empty;
+        _liveStatusDetail = string.Empty;
+        IsAgentRunning = false;
+        _runCancellation = null;
+        _runAllowedTools.Clear();
+        ToolApprovalRequests.Clear();
+    }
+
+    public void NewConversation()
+    {
+        CancelActiveRunForNewConversation();
+        LoadHome();
+    }
 
     public void ReturnToChat()
     {
@@ -4976,10 +5009,13 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         };
     }
 
-    private void AddBridgeEvent(PiBridgeEvent evt)
+    private void AddBridgeEvent(PiBridgeEvent evt) => AddBridgeEvent(_runVersion, evt);
+
+    private void AddBridgeEvent(int runVersion, PiBridgeEvent evt)
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
+            if (!IsCurrentRun(runVersion)) return;
             var (title, detail) = FormatBridgeStatus(evt);
             if (evt.Kind == "error")
             {
