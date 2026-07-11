@@ -6,7 +6,7 @@ using Ipi.Desktop.Models;
 
 namespace Ipi.Desktop.Services;
 
-public sealed record PiBridgeEvent(string Kind, string Label, string Detail, string EventType);
+public sealed record PiBridgeEvent(string Kind, string Label, string Detail, string EventType, string? SessionId = null, string? SessionFile = null);
 
 public sealed record PiToolApprovalRequest(string ApprovalId, string ToolName, string Summary, string Detail);
 
@@ -281,7 +281,7 @@ public sealed class PiAgentBridgeService
                         SessionId = GetString(root, "sessionId"),
                         SessionFile = GetString(root, "sessionFile"),
                     };
-                    onEvent(new PiBridgeEvent("state", "session ready", ShortSession(result.SessionId), "ready"));
+                    onEvent(new PiBridgeEvent("state", "session ready", ShortSession(result.SessionId), "ready", result.SessionId, result.SessionFile));
                     break;
                 case "approval_request":
                     _ = RespondToApprovalAsync(root, approveTool, process, stdinLock);

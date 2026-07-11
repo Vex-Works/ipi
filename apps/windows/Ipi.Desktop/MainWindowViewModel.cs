@@ -32,6 +32,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public event Action? RequestScrollChatToLatest;
     private bool _isAgentRunning;
     private int _runVersion;
+    private int _viewVersion;
+    private int? _visibleRunVersion;
     private CancellationTokenSource? _runCancellation;
     private readonly HashSet<string> _runAllowedTools = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _sessionLoadCancellation;
@@ -40,6 +42,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private DateTime _runStartedAt;
     private string _liveStatusTitle = string.Empty;
     private string _liveStatusDetail = string.Empty;
+    private readonly Dictionary<string, LiveRunViewState> _liveRunsBySessionFile = new(StringComparer.OrdinalIgnoreCase);
     public bool IsAgentRunning
     {
         get => _isAgentRunning;
@@ -911,8 +914,28 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public ObservableCollection<ModelOptionItem> ModelOptions { get; } = new();
     public ObservableCollection<BranchItem> BranchItems { get; } = new();
     public ObservableCollection<ChatMarkerItem> ChatMarkers { get; } = new();
-    public ObservableCollection<ToolApprovalRequestItem> ToolApprovalRequests { get; } = new();
-    public ObservableCollection<PanelRow> ContentRows { get; } = new();
+    private ObservableCollection<ToolApprovalRequestItem> _toolApprovalRequests = new();
+    public ObservableCollection<ToolApprovalRequestItem> ToolApprovalRequests
+    {
+        get => _toolApprovalRequests;
+        private set
+        {
+            if (ReferenceEquals(_toolApprovalRequests, value)) return;
+            _toolApprovalRequests = value;
+            OnPropertyChanged();
+        }
+    }
+    private ObservableCollection<PanelRow> _contentRows = new();
+    public ObservableCollection<PanelRow> ContentRows
+    {
+        get => _contentRows;
+        private set
+        {
+            if (ReferenceEquals(_contentRows, value)) return;
+            _contentRows = value;
+            OnPropertyChanged();
+        }
+    }
     public ObservableCollection<PanelRow> InspectorRows { get; } = new();
     public ObservableCollection<RightPanelActionItem> RightPanelActions { get; } = new();
 
@@ -1285,8 +1308,8 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
     {
         if (IsAgentRunning)
         {
-            _runCancellation?.Cancel();
-            StatusText = "stopping current run";
+            CurrentVisibleRun()?.Cancellation?.Cancel();
+            StatusText = "stopping current session run";
             return;
         }
 
@@ -1340,6 +1363,10 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
 
         var continuing = !string.IsNullOrWhiteSpace(sessionFileForRun) && ContentRows.Count > 0;
         var runVersion = ++_runVersion;
+        var runViewVersion = _viewVersion;
+        var runRows = ContentRows;
+        var runApprovals = ToolApprovalRequests;
+        _visibleRunVersion = runVersion;
         var runCancellation = new CancellationTokenSource();
         IsAgentRunning = true;
         _runStartedAt = DateTime.Now;
@@ -1375,19 +1402,28 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         {
             var runCwd = ResolveRunCwd();
             ClearPendingEditFromHere(false);
-            var result = await _agentBridge.RunPromptAsync(runCwd, _pi.AgentDir, agentMessage, evt => AddBridgeEvent(runVersion, evt), sessionFileForRun, ThinkingLevel, toolConfig.Tools, toolConfig.NoTools, RequestToolApprovalAsync, ApprovalModeKey(), ApprovalRulesForBridge(), branchFromEntryId: branchFromEntryId, provider: _activeProvider, model: _activeModel, cancellationToken: runCancellation.Token);
+            var result = await _agentBridge.RunPromptAsync(runCwd, _pi.AgentDir, agentMessage, evt => AddBridgeEvent(runVersion, runViewVersion, runRows, runApprovals, evt), sessionFileForRun, ThinkingLevel, toolConfig.Tools, toolConfig.NoTools, request => RequestToolApprovalAsync(runVersion, runViewVersion, runApprovals, request), ApprovalModeKey(), ApprovalRulesForBridge(), branchFromEntryId: branchFromEntryId, provider: _activeProvider, model: _activeModel, cancellationToken: runCancellation.Token);
             await SwitchToUiAsync();
-            if (!IsCurrentRun(runVersion)) return;
-            RemoveLiveStatusRows();
+            var runStillVisible = IsRunRowsVisible(runVersion, runViewVersion, runRows);
+            RemoveLiveStatusRows(runRows, clearVisibleStatus: runStillVisible);
             var finalText = !string.IsNullOrWhiteSpace(result.FinalText)
                 ? TrimForRow(result.FinalText, 8000)
                 : L("Agent 已完成，但没有返回文本。可从侧边栏打开保存的会话查看完整记录。", "Agent finished without a text response. Open the saved session from the sidebar for full details.");
-            await RevealAssistantMessageAsync(finalText, runCancellation.Token);
-            if (!string.IsNullOrWhiteSpace(result.SessionFile)) _activeSessionFile = result.SessionFile;
-            StatusText = string.IsNullOrWhiteSpace(result.SessionId) ? "agent finished" : $"agent finished · {result.SessionId}";
-            SessionStatsText = L("就绪", "Ready");
+            await RevealAssistantMessageAsync(runVersion, runViewVersion, runRows, finalText, runCancellation.Token);
+            if (!string.IsNullOrWhiteSpace(result.SessionFile))
+            {
+                _liveRunsBySessionFile[result.SessionFile] = new LiveRunViewState(runVersion, runViewVersion, runRows, runApprovals, runCancellation, IsRunning: false);
+                LoadSidebarProjectGroups();
+                LoadSidebarSessions();
+            }
+            if (runStillVisible)
+            {
+                if (!string.IsNullOrWhiteSpace(result.SessionFile)) _activeSessionFile = result.SessionFile;
+                StatusText = string.IsNullOrWhiteSpace(result.SessionId) ? "agent finished" : $"agent finished · {result.SessionId}";
+                SessionStatsText = L("就绪", "Ready");
+            }
             RefreshLocalData();
-            if (!string.IsNullOrWhiteSpace(_activeSessionFile) && File.Exists(_activeSessionFile))
+            if (runStillVisible && !string.IsNullOrWhiteSpace(_activeSessionFile) && File.Exists(_activeSessionFile))
             {
                 SetTopUsage(_pi.ReadSessionUsageSummary(_activeSessionFile));
             }
@@ -1395,10 +1431,11 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         catch (OperationCanceledException)
         {
             await SwitchToUiAsync();
-            if (IsCurrentRun(runVersion))
+            var runStillVisible = IsRunRowsVisible(runVersion, runViewVersion, runRows);
+            RemoveLiveStatusRows(runRows, clearVisibleStatus: runStillVisible);
+            runRows.Add(new("state", L("Agent 已停止", "Agent run stopped"), L("本轮生成已停止。", "This run has stopped."), null, "message"));
+            if (runStillVisible)
             {
-                RemoveLiveStatusRows();
-                ContentRows.Add(new("state", L("Agent 已停止", "Agent run stopped"), L("本轮生成已停止。", "This run has stopped."), null, "message"));
                 StatusText = "agent stopped";
                 SessionStatsText = L("已停止", "Stopped");
             }
@@ -1406,29 +1443,33 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         catch (Exception ex)
         {
             await SwitchToUiAsync();
-            if (IsCurrentRun(runVersion))
+            var runStillVisible = IsRunRowsVisible(runVersion, runViewVersion, runRows);
+            RemoveLiveStatusRows(runRows, clearVisibleStatus: runStillVisible);
+            runRows.Add(new("error", "Local agent failed", ex.Message, null, "message"));
+            if (runStillVisible)
             {
-                RemoveLiveStatusRows();
-                ContentRows.Add(new("error", "Local agent failed", ex.Message, null, "message"));
                 StatusText = "agent failed";
                 SessionStatsText = "error";
             }
         }
         finally
         {
-            if (IsCurrentRun(runVersion))
+            if (IsRunRowsVisible(runVersion, runViewVersion, runRows))
             {
                 _runElapsedTimer.Stop();
                 IsAgentRunning = false;
-                if (ReferenceEquals(_runCancellation, runCancellation)) _runCancellation = null;
+                if (_visibleRunVersion == runVersion) _visibleRunVersion = null;
                 ToolApprovalRequests.Clear();
             }
+            MarkLiveRunFinished(runVersion);
+            if (ReferenceEquals(_runCancellation, runCancellation)) _runCancellation = null;
             runCancellation.Dispose();
         }
     }
 
     public void SelectNav(object? item)
     {
+        DetachVisibleRunFromCurrentView();
         CancelSessionLoad();
         SetSystemContextMode(false);
         SetPluginsPageMode(false);
@@ -1530,27 +1571,39 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         LoadHome();
     }
 
-    private bool IsCurrentRun(int runVersion) => runVersion == _runVersion;
+    private bool IsVisibleRun(int runVersion) => _visibleRunVersion == runVersion;
+    private bool IsRunViewCurrent(int viewVersion) => viewVersion == _viewVersion;
+    private bool CanWriteRunToCurrentView(int runVersion, int viewVersion) => IsVisibleRun(runVersion) && IsRunViewCurrent(viewVersion);
+    private bool CanWriteRunToCurrentView(int runVersion, int viewVersion, ObservableCollection<PanelRow> rows) => CanWriteRunToCurrentView(runVersion, viewVersion) && ReferenceEquals(ContentRows, rows);
+    private bool IsRunRowsVisible(int runVersion, int viewVersion, ObservableCollection<PanelRow> rows) => CanWriteRunToCurrentView(runVersion, viewVersion, rows);
+    private LiveRunViewState? CurrentVisibleRun() => _activeSessionFile is not null && _liveRunsBySessionFile.TryGetValue(_activeSessionFile, out var run) ? run : null;
+    private bool IsSessionRunning(string filePath) => _liveRunsBySessionFile.TryGetValue(filePath, out var run) && run.IsRunning;
 
-    private void CancelActiveRunForNewConversation()
+    private void MarkLiveRunFinished(int runVersion)
     {
-        if (!IsAgentRunning && _runCancellation is null) return;
-        _runVersion++;
-        try { _runCancellation?.Cancel(); } catch { }
+        foreach (var key in _liveRunsBySessionFile.Where(pair => pair.Value.RunVersion == runVersion).Select(pair => pair.Key).ToList())
+        {
+            var run = _liveRunsBySessionFile[key];
+            _liveRunsBySessionFile[key] = run with { IsRunning = false, Cancellation = null };
+        }
+        LoadSidebarProjectGroups();
+        LoadSidebarSessions();
+    }
+
+    private void DetachVisibleRunFromCurrentView()
+    {
+        _viewVersion++;
+        _visibleRunVersion = null;
+        ContentRows = new ObservableCollection<PanelRow>();
         _runElapsedTimer.Stop();
         _liveStatusTitle = string.Empty;
         _liveStatusDetail = string.Empty;
         IsAgentRunning = false;
-        _runCancellation = null;
-        _runAllowedTools.Clear();
-        ToolApprovalRequests.Clear();
+        RemoveLiveStatusRows();
+        ToolApprovalRequests = new ObservableCollection<ToolApprovalRequestItem>();
     }
 
-    public void NewConversation()
-    {
-        CancelActiveRunForNewConversation();
-        LoadHome();
-    }
+    public void NewConversation() => LoadHome();
 
     public void ReturnToChat()
     {
@@ -2707,13 +2760,16 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         ReasoningOptions.Add(new("xhigh", L("超高", "Ultra"), ThinkingLevel == "xhigh" ? "✓" : ""));
     }
 
-    private Task<PiToolApprovalDecision> RequestToolApprovalAsync(PiToolApprovalRequest request)
+    private Task<PiToolApprovalDecision> RequestToolApprovalAsync(PiToolApprovalRequest request) => RequestToolApprovalAsync(_runVersion, _viewVersion, ToolApprovalRequests, request);
+
+    private Task<PiToolApprovalDecision> RequestToolApprovalAsync(int runVersion, int viewVersion, ObservableCollection<ToolApprovalRequestItem> approvals, PiToolApprovalRequest request)
     {
         if (_runAllowedTools.Contains(request.ToolName)) return Task.FromResult(new PiToolApprovalDecision(true));
 
         var tcs = new TaskCompletionSource<PiToolApprovalDecision>(TaskCreationOptions.RunContinuationsAsynchronously);
         Application.Current.Dispatcher.Invoke(() =>
         {
+            var visible = CanWriteRunToCurrentView(runVersion, viewVersion) && ReferenceEquals(ToolApprovalRequests, approvals);
             var item = new ToolApprovalRequestItem(
                 request.ApprovalId,
                 request.ToolName,
@@ -2726,8 +2782,8 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
                 L("拒绝", "Deny"),
                 L("可选：告诉 agent 换一种做法…", "Optional: tell the agent what to do instead…"),
                 tcs);
-            ToolApprovalRequests.Add(item);
-            StatusText = $"tool approval required · {request.ToolName}";
+            approvals.Add(item);
+            if (visible) StatusText = $"tool approval required · {request.ToolName}";
         });
         return tcs.Task;
     }
@@ -2795,6 +2851,7 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
 
     private void LoadHome()
     {
+        DetachVisibleRunFromCurrentView();
         CancelSessionLoad();
         SetSystemContextMode(false);
         PanelTitle = L("我们该做什么？", "What should we do?");
@@ -2922,7 +2979,27 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
 
     private void OpenSession(string? filePath, string fallbackTitle)
     {
+        DetachVisibleRunFromCurrentView();
         CancelSessionLoad();
+        if (!string.IsNullOrWhiteSpace(filePath) && _liveRunsBySessionFile.TryGetValue(filePath, out var liveRun))
+        {
+            _viewVersion = liveRun.ViewVersion;
+            _visibleRunVersion = liveRun.RunVersion;
+            ContentRows = liveRun.Rows;
+            ToolApprovalRequests = liveRun.Approvals;
+            _activeSessionFile = filePath;
+            PanelTitle = fallbackTitle;
+            PanelSubtitle = ShortenPath(filePath);
+            IsChatMode = true;
+            IsStartActionsVisible = false;
+            CanReturnToChat = false;
+            IsComposerVisible = true;
+            IsToolbarVisible = true;
+            IsInspectorVisible = false;
+            _runCancellation = liveRun.Cancellation;
+            IsAgentRunning = liveRun.IsRunning && liveRun.Cancellation is not null;
+            return;
+        }
         var loadVersion = ++_sessionLoadVersion;
         var cts = new CancellationTokenSource();
         _sessionLoadCancellation = cts;
@@ -4875,7 +4952,10 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
     }
 
     private SessionItem ToSidebarSession(PiSessionRecord session)
-        => new("message-square", session.Title, false, session.FilePath, FormatAge(session.Modified), session.MessageCount);
+    {
+        var running = IsSessionRunning(session.FilePath);
+        return new(running ? "zap" : "message-square", session.Title, false, session.FilePath, running ? L("running · thinking", "running · thinking") : FormatAge(session.Modified), session.MessageCount);
+    }
 
     private void LoadSidebarConfig((string DefaultProvider, string DefaultModel, string DefaultThinking) settings)
     {
@@ -4909,18 +4989,31 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         UpdateLiveStatusRow();
     }
 
-    private void UpdateLiveStatusRow()
+    private void AddOrUpdateLiveStatus(ObservableCollection<PanelRow> rows, int runVersion, int viewVersion, string title, string detail = "")
     {
-        if (string.IsNullOrWhiteSpace(_liveStatusTitle)) return;
+        if (IsRunRowsVisible(runVersion, viewVersion, rows))
+        {
+            _liveStatusTitle = title;
+            _liveStatusDetail = TrimForRow(detail.Replace("\r", " ").Replace("\n", " ").Trim(), 260);
+        }
+        UpdateLiveStatusRow(rows, IsRunRowsVisible(runVersion, viewVersion, rows));
+    }
+
+    private void UpdateLiveStatusRow() => UpdateLiveStatusRow(ContentRows, true);
+
+    private void UpdateLiveStatusRow(ObservableCollection<PanelRow> rows, bool notifyUi)
+    {
+        var detailText = notifyUi ? _liveStatusDetail : string.Empty;
+        if (notifyUi && string.IsNullOrWhiteSpace(_liveStatusTitle)) return;
         var title = "thinking";
-        var detail = IsAgentRunning && !string.IsNullOrWhiteSpace(_liveStatusDetail)
-            ? $"{FormatRunElapsed()} · {_liveStatusDetail}"
-            : _liveStatusDetail;
+        var detail = notifyUi && IsAgentRunning && !string.IsNullOrWhiteSpace(detailText)
+            ? $"{FormatRunElapsed()} · {detailText}"
+            : detailText;
         var row = new PanelRow("thinking", title, detail, LiveStatusPath, "thinking");
-        var index = ContentRows.ToList().FindIndex(r => r.Path == LiveStatusPath);
-        if (index >= 0) ContentRows[index] = row;
-        else ContentRows.Add(row);
-        RequestScrollChatToLatest?.Invoke();
+        var index = rows.ToList().FindIndex(r => r.Path == LiveStatusPath);
+        if (index >= 0) rows[index] = row;
+        else rows.Add(row);
+        if (notifyUi) RequestScrollChatToLatest?.Invoke();
     }
 
     private string FormatRunElapsed()
@@ -4929,11 +5022,11 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         return elapsed.TotalHours >= 1 ? $"{(int)elapsed.TotalHours:0}:{elapsed.Minutes:00}:{elapsed.Seconds:00}" : $"{elapsed.Minutes:00}:{elapsed.Seconds:00}";
     }
 
-    private async Task RevealAssistantMessageAsync(string text, CancellationToken cancellationToken)
+    private async Task RevealAssistantMessageAsync(int runVersion, int viewVersion, ObservableCollection<PanelRow> rows, string text, CancellationToken cancellationToken)
     {
-        var index = ContentRows.Count;
-        ContentRows.Add(new("assistant", "", "", null, "message"));
-        RequestScrollChatToLatest?.Invoke();
+        var index = rows.Count;
+        rows.Add(new("assistant", "", "", null, "message"));
+        if (IsRunRowsVisible(runVersion, viewVersion, rows)) RequestScrollChatToLatest?.Invoke();
 
         var visible = new StringBuilder();
         var cursor = 0;
@@ -4943,10 +5036,11 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
             var chunk = NextRevealChunk(text, cursor);
             visible.Append(text.AsSpan(cursor, chunk));
             cursor += chunk;
-            if (index < ContentRows.Count) ContentRows[index] = new PanelRow("assistant", visible.ToString(), "", null, "message");
+            if (index < rows.Count) rows[index] = new PanelRow("assistant", visible.ToString(), "", null, "message");
+            if (IsRunRowsVisible(runVersion, viewVersion, rows)) RequestScrollChatToLatest?.Invoke();
             await Task.Delay(RevealDelayFor(text.Length), cancellationToken);
         }
-        RequestScrollChatToLatest?.Invoke();
+        if (IsRunRowsVisible(runVersion, viewVersion, rows)) RequestScrollChatToLatest?.Invoke();
     }
 
     private static int NextRevealChunk(string text, int cursor)
@@ -4979,13 +5073,18 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         _ => 22,
     };
 
-    private void RemoveLiveStatusRows()
+    private void RemoveLiveStatusRows() => RemoveLiveStatusRows(ContentRows, clearVisibleStatus: true);
+
+    private void RemoveLiveStatusRows(ObservableCollection<PanelRow> rows, bool clearVisibleStatus)
     {
-        _liveStatusTitle = string.Empty;
-        _liveStatusDetail = string.Empty;
-        for (var i = ContentRows.Count - 1; i >= 0; i--)
+        if (clearVisibleStatus)
         {
-            if (ContentRows[i].Path == LiveStatusPath) ContentRows.RemoveAt(i);
+            _liveStatusTitle = string.Empty;
+            _liveStatusDetail = string.Empty;
+        }
+        for (var i = rows.Count - 1; i >= 0; i--)
+        {
+            if (rows[i].Path == LiveStatusPath) rows.RemoveAt(i);
         }
     }
 
@@ -5009,29 +5108,32 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         };
     }
 
-    private void AddBridgeEvent(PiBridgeEvent evt) => AddBridgeEvent(_runVersion, evt);
+    private void AddBridgeEvent(PiBridgeEvent evt) => AddBridgeEvent(_runVersion, _viewVersion, ContentRows, ToolApprovalRequests, evt);
 
-    private void AddBridgeEvent(int runVersion, PiBridgeEvent evt)
+    private void AddBridgeEvent(int runVersion, int viewVersion, ObservableCollection<PanelRow> rows, ObservableCollection<ToolApprovalRequestItem> approvals, PiBridgeEvent evt)
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
-            if (!IsCurrentRun(runVersion)) return;
+            var visible = IsRunRowsVisible(runVersion, viewVersion, rows);
+            if (evt.EventType == "ready" && !string.IsNullOrWhiteSpace(evt.SessionFile))
+            {
+                _liveRunsBySessionFile[evt.SessionFile] = new LiveRunViewState(runVersion, viewVersion, rows, approvals, _runCancellation, IsRunning: true);
+                if (visible) _activeSessionFile = evt.SessionFile;
+                LoadSidebarProjectGroups();
+                LoadSidebarSessions();
+            }
             var (title, detail) = FormatBridgeStatus(evt);
             if (evt.Kind == "error")
             {
-                RemoveLiveStatusRows();
-                ContentRows.Add(new("error", title, detail, null, "error"));
-            }
-            else if (evt.Kind == "tool")
-            {
-                AddOrUpdateLiveStatus(title, detail);
+                RemoveLiveStatusRows(rows, clearVisibleStatus: visible);
+                rows.Add(new("error", title, detail, null, "error"));
             }
             else
             {
-                AddOrUpdateLiveStatus(title, detail);
+                AddOrUpdateLiveStatus(rows, runVersion, viewVersion, title, detail);
             }
 
-            StatusText = title;
+            if (visible) StatusText = title;
         });
     }
 
@@ -5676,6 +5778,8 @@ public sealed record ChatMessageLineItem(string Text, bool IsBullet)
         return runs.Count == 0 ? new[] { new ChatMessageRunItem(text) } : runs;
     }
 }
+
+public sealed record LiveRunViewState(int RunVersion, int ViewVersion, ObservableCollection<PanelRow> Rows, ObservableCollection<ToolApprovalRequestItem> Approvals, CancellationTokenSource? Cancellation, bool IsRunning);
 
 public sealed record PanelRow(string Badge, string Title, string Detail = "", string? Path = null, string Kind = "info", IReadOnlyList<ChatAttachmentPreviewItem>? Attachments = null)
 {

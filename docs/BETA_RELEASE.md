@@ -79,6 +79,18 @@ Settings and diagnostics are designed to show local readiness state without expo
 
 Do not paste API keys, tokens, `.env` files, browser cookies, wallet/seed files, or private SSH keys into issues or screenshots.
 
+## Live run behavior
+
+ipi keeps active agent runs scoped to the session that started them.
+
+Expected behavior to verify before release:
+
+- starting a new chat while another session is thinking should not leak old output into the new chat;
+- switching away from a running session should not cancel that session's run;
+- switching back to a running session should restore its live rows and pending approvals;
+- the stop button should stop only the currently visible session run;
+- tool approval cards should belong to the session that requested them.
+
 ## Known limitations
 
 - The installer is unsigned.
