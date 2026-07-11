@@ -429,6 +429,11 @@
       </Setter>
     </Style>
 
+    <Style x:Key="AttachmentMenuItem" TargetType="MenuItem" BasedOn="{StaticResource ProjectMenuItem}">
+      <Setter Property="MinWidth" Value="180" />
+      <Setter Property="Padding" Value="12,7" />
+    </Style>
+
     <Style x:Key="RoundIconButton" TargetType="Button">
       <Setter Property="FocusVisualStyle" Value="{StaticResource IpiKeyboardFocusStyle}" />
       <Setter Property="Width" Value="36" />
@@ -634,7 +639,15 @@
     </DataTemplate>
 
     <DataTemplate x:Key="ChatAttachmentPreviewTemplate">
-      <Grid Margin="0,0,7,7">
+      <Grid Margin="0,0,7,7" ContextMenuService.IsEnabled="{Binding IsImage}">
+        <Grid.ContextMenu>
+          <ContextMenu Style="{StaticResource TitleContextMenu}" DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}" Opened="ChatAttachmentContextMenu_Opened">
+            <MenuItem Style="{StaticResource AttachmentMenuItem}" Click="ChatAttachmentCopyImage_Click" />
+            <MenuItem Style="{StaticResource AttachmentMenuItem}" Click="ChatAttachmentCopyFile_Click" />
+            <Separator Style="{StaticResource TitleMenuSeparator}" />
+            <MenuItem Style="{StaticResource AttachmentMenuItem}" Click="ChatAttachmentOpenLocation_Click" />
+          </ContextMenu>
+        </Grid.ContextMenu>
         <Grid Width="148" Height="104" Visibility="{Binding ImageVisibility}" SnapsToDevicePixels="True" UseLayoutRounding="True">
           <Border CornerRadius="10">
             <Border.Background>

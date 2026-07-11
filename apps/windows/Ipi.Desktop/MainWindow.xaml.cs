@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -1819,6 +1820,54 @@ public partial class MainWindow
     private void AttachmentRemove_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button { DataContext: AttachmentItem item }) ViewModel.RemoveAttachment(item);
+    }
+
+    private void ChatAttachmentContextMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ContextMenu { Items.Count: >= 4 } menu) return;
+        if (menu.Items[0] is MenuItem copyImage) copyImage.Header = T("复制图片", "Copy image");
+        if (menu.Items[1] is MenuItem copyFile) copyFile.Header = T("复制图片文件", "Copy image file");
+        if (menu.Items[3] is MenuItem openLocation) openLocation.Header = T("打开所在位置", "Open file location");
+    }
+
+    private void ChatAttachmentCopyImage_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { DataContext: ChatAttachmentPreviewItem item } || !File.Exists(item.Path)) return;
+        try
+        {
+            var image = new BitmapImage();
+            image.BeginInit();
+            image.CacheOption = BitmapCacheOption.OnLoad;
+            image.UriSource = new Uri(item.Path, UriKind.Absolute);
+            image.EndInit();
+            image.Freeze();
+            Clipboard.SetImage(image);
+            ViewModel.StatusText = T("图片已复制", "image copied");
+        }
+        catch (Exception ex)
+        {
+            ViewModel.StatusText = T($"复制图片失败 · {ex.Message}", $"image copy failed · {ex.Message}");
+        }
+    }
+
+    private void ChatAttachmentCopyFile_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { DataContext: ChatAttachmentPreviewItem item } || !File.Exists(item.Path)) return;
+        try
+        {
+            Clipboard.SetFileDropList(new StringCollection { item.Path });
+            ViewModel.StatusText = T("图片文件已复制", "image file copied");
+        }
+        catch (Exception ex)
+        {
+            ViewModel.StatusText = T($"复制图片文件失败 · {ex.Message}", $"image file copy failed · {ex.Message}");
+        }
+    }
+
+    private void ChatAttachmentOpenLocation_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { DataContext: ChatAttachmentPreviewItem item } || !File.Exists(item.Path)) return;
+        Process.Start(new ProcessStartInfo { FileName = "explorer.exe", Arguments = $"/select,\"{item.Path}\"", UseShellExecute = true });
     }
 
     private void MainApproval_Click(object sender, RoutedEventArgs e) => ViewModel.ToggleApprovalPicker(false);
