@@ -7,8 +7,8 @@
     "dev": "tsx packages/cli/src/main.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "test:unit": "node --import tsx --test --test-isolation=none packages/core/src/session-store.test.ts packages/tui/src/terminal-sanitize.test.ts",
-    "test:bridge": "node --test --test-isolation=none apps/windows/Ipi.Desktop/bridge-policy.test.mjs apps/windows/Ipi.Desktop/approval-router.test.mjs",
+    "test:unit": "node --import tsx --test packages/core/src/session-store.test.ts packages/tui/src/terminal-sanitize.test.ts",
+    "test:bridge": "node --test apps/windows/Ipi.Desktop/bridge-policy.test.mjs apps/windows/Ipi.Desktop/approval-router.test.mjs",
     "test": "npm run typecheck && npm run test:unit && npm run test:bridge"
   },
   "bin": {
