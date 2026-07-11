@@ -8,7 +8,7 @@ namespace Ipi.Desktop.Services;
 
 public sealed record PiBridgeEvent(string Kind, string Label, string Detail, string EventType, string? SessionId = null, string? SessionFile = null);
 
-public sealed record PiToolApprovalRequest(string ApprovalId, string ToolName, string Summary, string Detail);
+public sealed record PiToolApprovalRequest(string ApprovalId, string ToolName, string Summary, string Detail, string RequestScope = "");
 
 public sealed record PiToolApprovalDecision(bool Approved, string Reason = "");
 
@@ -37,10 +37,11 @@ public sealed class PiAgentBridgeService
     {
         var bridgePath = Path.Combine(AppContext.BaseDirectory, "agent-bridge.mjs");
         if (!File.Exists(bridgePath)) throw new FileNotFoundException("ipi agent bridge was not copied to the output directory", bridgePath);
+        var runtime = ResolveBridgeRuntime();
 
         var psi = new ProcessStartInfo
         {
-            FileName = ResolveNodeCommand(),
+            FileName = runtime.NodeCommand,
             WorkingDirectory = cwd,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -51,16 +52,18 @@ public sealed class PiAgentBridgeService
             StandardErrorEncoding = Encoding.UTF8,
         };
         psi.ArgumentList.Add(bridgePath);
+        ConfigureBridgeEnvironment(psi);
 
         using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         var stderr = new StringBuilder();
         var result = new PiBridgeRunResult(null, null, null);
+        var bridgeError = "";
         var stdinLock = new SemaphoreSlim(1, 1);
 
         process.OutputDataReceived += (_, e) =>
         {
             if (string.IsNullOrWhiteSpace(e.Data)) return;
-            HandleBridgeLine(e.Data, onEvent, ref result, approveTool, process, stdinLock);
+            HandleBridgeLine(e.Data, onEvent, ref result, ref bridgeError, approveTool, process, stdinLock);
         };
         process.ErrorDataReceived += (_, e) =>
         {
@@ -83,6 +86,7 @@ public sealed class PiAgentBridgeService
         {
             cwd,
             agentDir,
+            piCodingAgentRoot = runtime.PiCodingAgentRoot,
             command,
             message,
             sessionFile,
@@ -100,7 +104,7 @@ public sealed class PiAgentBridgeService
         await process.WaitForExitAsync(cancellationToken);
         if (process.ExitCode != 0)
         {
-            var detail = stderr.ToString().Trim();
+            var detail = BridgeFailureDetail(stderr.ToString(), bridgeError);
             throw new InvalidOperationException(string.IsNullOrWhiteSpace(detail) ? "agent bridge failed" : detail);
         }
 
@@ -121,9 +125,10 @@ public sealed class PiAgentBridgeService
         var bridgePath = Path.Combine(AppContext.BaseDirectory, "agent-bridge.mjs");
         if (!File.Exists(bridgePath)) throw new FileNotFoundException("ipi agent bridge was not copied to the output directory", bridgePath);
         var workingDirectory = Directory.Exists(cwd) ? cwd : AppContext.BaseDirectory;
+        var runtime = ResolveBridgeRuntime();
         var psi = new ProcessStartInfo
         {
-            FileName = ResolveNodeCommand(),
+            FileName = runtime.NodeCommand,
             WorkingDirectory = workingDirectory,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -134,6 +139,7 @@ public sealed class PiAgentBridgeService
             StandardErrorEncoding = Encoding.UTF8,
         };
         psi.ArgumentList.Add(bridgePath);
+        ConfigureBridgeEnvironment(psi);
 
         using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         if (!process.Start()) throw new InvalidOperationException("failed to start node bridge");
@@ -150,6 +156,7 @@ public sealed class PiAgentBridgeService
         {
             cwd = workingDirectory,
             agentDir,
+            piCodingAgentRoot = runtime.PiCodingAgentRoot,
             command = "models",
             message = "",
         }));
@@ -162,7 +169,7 @@ public sealed class PiAgentBridgeService
         var stderr = await stderrTask;
         if (process.ExitCode != 0)
         {
-            var detail = stderr.Trim();
+            var detail = BridgeFailureDetail(stderr, LastBridgeError(stdout));
             throw new InvalidOperationException(string.IsNullOrWhiteSpace(detail) ? "agent bridge failed" : detail);
         }
 
@@ -192,9 +199,10 @@ public sealed class PiAgentBridgeService
         var bridgePath = Path.Combine(AppContext.BaseDirectory, "agent-bridge.mjs");
         if (!File.Exists(bridgePath)) throw new FileNotFoundException("ipi agent bridge was not copied to the output directory", bridgePath);
         var workingDirectory = Directory.Exists(cwd) ? cwd : AppContext.BaseDirectory;
+        var runtime = ResolveBridgeRuntime();
         var psi = new ProcessStartInfo
         {
-            FileName = ResolveNodeCommand(),
+            FileName = runtime.NodeCommand,
             WorkingDirectory = workingDirectory,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -205,6 +213,7 @@ public sealed class PiAgentBridgeService
             StandardErrorEncoding = Encoding.UTF8,
         };
         psi.ArgumentList.Add(bridgePath);
+        ConfigureBridgeEnvironment(psi);
 
         using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         if (!process.Start()) throw new InvalidOperationException("failed to start node bridge");
@@ -221,6 +230,7 @@ public sealed class PiAgentBridgeService
         {
             cwd = workingDirectory,
             agentDir,
+            piCodingAgentRoot = runtime.PiCodingAgentRoot,
             command = "provider_catalog",
             message = "",
         }));
@@ -233,7 +243,7 @@ public sealed class PiAgentBridgeService
         var stderr = await stderrTask;
         if (process.ExitCode != 0)
         {
-            var detail = stderr.Trim();
+            var detail = BridgeFailureDetail(stderr, LastBridgeError(stdout));
             throw new InvalidOperationException(string.IsNullOrWhiteSpace(detail) ? "agent bridge failed" : detail);
         }
 
@@ -258,12 +268,60 @@ public sealed class PiAgentBridgeService
         return providers;
     }
 
-    private static string ResolveNodeCommand() => new PiRuntimeService().Resolve().NodePath ?? "node";
+    private static (string NodeCommand, string PiCodingAgentRoot) ResolveBridgeRuntime()
+    {
+        var runtime = new PiRuntimeService().Resolve();
+        if (string.IsNullOrWhiteSpace(runtime.PiCodingAgentRoot))
+        {
+            throw new InvalidOperationException("Pi coding agent runtime was not found");
+        }
+
+        var piCodingAgentRoot = Path.GetFullPath(runtime.PiCodingAgentRoot);
+        var entryPoint = Path.Combine(piCodingAgentRoot, "dist", "index.js");
+        if (!File.Exists(entryPoint))
+        {
+            throw new FileNotFoundException("Pi coding agent runtime entry point was not found", entryPoint);
+        }
+
+        return (runtime.NodePath ?? "node", piCodingAgentRoot);
+    }
+
+    private static void ConfigureBridgeEnvironment(ProcessStartInfo psi)
+    {
+        psi.Environment["IPI_APPDATA_DIR"] = IpiPathService.AppDataDir;
+        psi.Environment["IPI_LOCALAPPDATA_DIR"] = IpiPathService.LocalAppDataDir;
+    }
+
+    private static string LastBridgeError(string stdout)
+    {
+        var lastError = "";
+        foreach (var line in stdout.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(line);
+                var root = doc.RootElement;
+                if (GetString(root, "type") == "error") lastError = GetString(root, "message");
+            }
+            catch (JsonException) { }
+        }
+        return lastError;
+    }
+
+    private static string BridgeFailureDetail(string stderr, string bridgeError)
+    {
+        var standardError = stderr.Trim();
+        if (string.IsNullOrWhiteSpace(bridgeError)) return standardError;
+        return string.IsNullOrWhiteSpace(standardError)
+            ? bridgeError
+            : $"{bridgeError}{Environment.NewLine}{standardError}";
+    }
 
     private static void HandleBridgeLine(
         string line,
         Action<PiBridgeEvent> onEvent,
         ref PiBridgeRunResult result,
+        ref string bridgeError,
         Func<PiToolApprovalRequest, Task<PiToolApprovalDecision>>? approveTool,
         Process process,
         SemaphoreSlim stdinLock)
@@ -302,7 +360,8 @@ public sealed class PiAgentBridgeService
                     };
                     break;
                 case "error":
-                    onEvent(new PiBridgeEvent("error", "agent bridge error", GetString(root, "message"), "error"));
+                    bridgeError = GetString(root, "message");
+                    onEvent(new PiBridgeEvent("error", "agent bridge error", bridgeError, "error"));
                     break;
             }
         }
@@ -321,13 +380,28 @@ public sealed class PiAgentBridgeService
         var approvalId = GetString(root, "approvalId");
         if (string.IsNullOrWhiteSpace(approvalId) || process.HasExited) return;
 
-        var decision = approveTool is null
-            ? new PiToolApprovalDecision(true)
-            : await approveTool(new PiToolApprovalRequest(
-                approvalId,
-                GetString(root, "toolName"),
-                GetString(root, "summary"),
-                GetString(root, "detail")));
+        PiToolApprovalDecision decision;
+        if (approveTool is null)
+        {
+            decision = new PiToolApprovalDecision(false, "No approval handler is available");
+        }
+        else
+        {
+            try
+            {
+                decision = await approveTool(new PiToolApprovalRequest(
+                    approvalId,
+                    GetString(root, "toolName"),
+                    GetString(root, "summary"),
+                    GetString(root, "detail"),
+                    GetString(root, "requestScope")))
+                    ?? new PiToolApprovalDecision(false, "Approval handler returned no decision");
+            }
+            catch (Exception ex)
+            {
+                decision = new PiToolApprovalDecision(false, $"Approval handler failed: {ex.Message}");
+            }
+        }
 
         await stdinLock.WaitAsync();
         try

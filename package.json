@@ -1,12 +1,15 @@
 {
   "name": "ipi",
-  "version": "0.0.0",
+  "version": "0.1.0-beta.1",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "tsx packages/cli/src/main.ts",
     "typecheck": "tsc --noEmit",
-    "build": "tsc"
+    "build": "tsc",
+    "test:unit": "node --import tsx --test --test-isolation=none packages/core/src/session-store.test.ts packages/tui/src/terminal-sanitize.test.ts",
+    "test:bridge": "node --test --test-isolation=none apps/windows/Ipi.Desktop/bridge-policy.test.mjs apps/windows/Ipi.Desktop/approval-router.test.mjs",
+    "test": "npm run typecheck && npm run test:unit && npm run test:bridge"
   },
   "bin": {
     "ipi": "dist/packages/cli/src/main.js"

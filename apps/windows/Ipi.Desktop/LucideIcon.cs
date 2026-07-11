@@ -40,7 +40,7 @@ public sealed class LucideIcon : FrameworkElement
         IsHitTestVisible = true;
         RenderTransformOrigin = new Point(0.5, 0.5);
         RenderTransform = new TransformGroup { Children = { _scale, _translate } };
-        MouseEnter += (_, _) => Animate(1.06, -0.75, 110);
+        MouseEnter += (_, _) => Animate(1.04, 0.0, 110);
         MouseLeave += (_, _) => Animate(1.0, 0.0, 130);
     }
 

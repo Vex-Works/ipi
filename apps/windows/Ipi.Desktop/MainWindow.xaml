@@ -4,11 +4,12 @@
         xmlns:local="clr-namespace:Ipi.Desktop"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
-        Title="ipi" Width="1460" Height="900" MinWidth="1120" MinHeight="720"
+        Title="ipi" Width="1460" Height="900" MinWidth="960" MinHeight="620"
         WindowStartupLocation="CenterScreen" Background="Transparent"
         WindowStyle="None" ResizeMode="CanResize"
         UseLayoutRounding="True" SnapsToDevicePixels="True"
-        PreviewKeyDown="Window_PreviewKeyDown">
+        PreviewKeyDown="Window_PreviewKeyDown"
+        Closing="MainWindow_Closing">
   <shell:WindowChrome.WindowChrome>
     <shell:WindowChrome CaptionHeight="42" ResizeBorderThickness="6" CornerRadius="0" GlassFrameThickness="0" UseAeroCaptionButtons="False" />
   </shell:WindowChrome.WindowChrome>
@@ -57,7 +58,7 @@
     <SolidColorBrush x:Key="ChatScrollThumb" Color="#747B86" />
     <SolidColorBrush x:Key="TextPrimary" Color="#F3F4F6" />
     <SolidColorBrush x:Key="TextMuted" Color="#A9ADB7" />
-    <SolidColorBrush x:Key="TextDim" Color="#747986" />
+    <SolidColorBrush x:Key="TextDim" Color="#8A919E" />
     <SolidColorBrush x:Key="CaretBrush" Color="#F3F4F6" />
     <SolidColorBrush x:Key="SelectionBrush" Color="#4B6FEA" />
 
@@ -70,6 +71,16 @@
       <Setter Property="FontFamily" Value="{DynamicResource IpiTextFontFamily}" />
       <Setter Property="CaretBrush" Value="{DynamicResource CaretBrush}" />
       <Setter Property="SelectionBrush" Value="{DynamicResource SelectionBrush}" />
+    </Style>
+
+    <Style x:Key="IpiKeyboardFocusStyle" TargetType="Control">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate>
+            <Border BorderBrush="{DynamicResource FeedbackAccent}" BorderThickness="2" CornerRadius="8" Margin="-3" SnapsToDevicePixels="True" />
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>
 
     <HierarchicalDataTemplate DataType="{x:Type local:FileExplorerNode}" ItemsSource="{Binding Children}">
@@ -141,7 +152,7 @@
     </Style>
 
     <Style x:Key="GhostButton" TargetType="Button">
-      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="FocusVisualStyle" Value="{StaticResource IpiKeyboardFocusStyle}" />
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Padding" Value="0" />
@@ -162,7 +173,7 @@
     </Style>
 
     <Style x:Key="LogoNewChatButton" TargetType="Button">
-      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="FocusVisualStyle" Value="{StaticResource IpiKeyboardFocusStyle}" />
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Padding" Value="0" />
@@ -246,7 +257,7 @@
     </Style>
 
     <Style x:Key="MessageActionButton" TargetType="Button">
-      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="FocusVisualStyle" Value="{StaticResource IpiKeyboardFocusStyle}" />
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Padding" Value="7,0" />
@@ -419,7 +430,7 @@
     </Style>
 
     <Style x:Key="RoundIconButton" TargetType="Button">
-      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="FocusVisualStyle" Value="{StaticResource IpiKeyboardFocusStyle}" />
       <Setter Property="Width" Value="36" />
       <Setter Property="Height" Value="36" />
       <Setter Property="BorderThickness" Value="0" />
@@ -436,7 +447,7 @@
     </Style>
 
     <Style x:Key="ComposerIconButton" TargetType="Button">
-      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="FocusVisualStyle" Value="{StaticResource IpiKeyboardFocusStyle}" />
       <Setter Property="Width" Value="34" />
       <Setter Property="Height" Value="34" />
       <Setter Property="VerticalAlignment" Value="Center" />
@@ -462,7 +473,7 @@
     </Style>
 
     <Style x:Key="ComposerPillButton" TargetType="Button">
-      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="FocusVisualStyle" Value="{StaticResource IpiKeyboardFocusStyle}" />
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="Foreground" Value="{DynamicResource ComposerTextMuted}" />
       <Setter Property="VerticalAlignment" Value="Center" />
@@ -487,7 +498,7 @@
     </Style>
 
     <Style x:Key="ApprovalMenuOptionButton" TargetType="Button">
-      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="FocusVisualStyle" Value="{StaticResource IpiKeyboardFocusStyle}" />
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Padding" Value="7,5" />
@@ -508,7 +519,7 @@
     </Style>
 
     <Style x:Key="CodexSendButton" TargetType="Button">
-      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="FocusVisualStyle" Value="{StaticResource IpiKeyboardFocusStyle}" />
       <Setter Property="Width" Value="36" />
       <Setter Property="Height" Value="36" />
       <Setter Property="VerticalAlignment" Value="Center" />
@@ -583,7 +594,7 @@
       <Setter Property="SelectionBrush" Value="{DynamicResource SelectionBrush}" />
       <Setter Property="CaretBrush" Value="{DynamicResource TextDim}" />
       <Setter Property="Focusable" Value="True" />
-      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="FocusVisualStyle" Value="{StaticResource IpiKeyboardFocusStyle}" />
       <Setter Property="Cursor" Value="IBeam" />
       <Setter Property="Template">
         <Setter.Value>
@@ -722,9 +733,9 @@
       <Grid>
         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0" shell:WindowChrome.IsHitTestVisibleInChrome="True">
-          <Button Style="{StaticResource GhostButton}" Width="34" Height="30" Click="ToggleSidebar_Click" ToolTip="{Binding ToggleSidebarToolTip}"><local:LucideIcon Icon="panel-left" Size="15" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Center" /></Button>
-          <Button Style="{StaticResource GhostButton}" Width="34" Height="30" Click="TopBack_Click" ToolTip="{Binding BackToChatToolTip}"><local:LucideIcon Icon="arrow-left" Size="15" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Center" /></Button>
-          <Button Style="{StaticResource GhostButton}" Width="34" Height="30" Click="TopForward_Click" ToolTip="{Binding OpenRecentChatToolTip}"><local:LucideIcon Icon="arrow-right" Size="15" Stroke="{DynamicResource TextDim}" HorizontalAlignment="Center" /></Button>
+          <Button Style="{StaticResource GhostButton}" Width="34" Height="30" Click="ToggleSidebar_Click" ToolTip="{Binding ToggleSidebarToolTip}" AutomationProperties.Name="{Binding ToggleSidebarToolTip}"><local:LucideIcon Icon="panel-left" Size="15" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Center" IsHitTestVisible="False" /></Button>
+          <Button Style="{StaticResource GhostButton}" Width="34" Height="30" Click="TopBack_Click" ToolTip="{Binding BackToChatToolTip}" AutomationProperties.Name="{Binding BackToChatToolTip}"><local:LucideIcon Icon="arrow-left" Size="15" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Center" IsHitTestVisible="False" /></Button>
+          <Button Style="{StaticResource GhostButton}" Width="34" Height="30" Click="TopForward_Click" ToolTip="{Binding OpenRecentChatToolTip}" AutomationProperties.Name="{Binding OpenRecentChatToolTip}"><local:LucideIcon Icon="arrow-right" Size="15" Stroke="{DynamicResource TextDim}" HorizontalAlignment="Center" IsHitTestVisible="False" /></Button>
           <Button Style="{StaticResource TitleMenuButton}" Click="TopFile_Click" Margin="12,0,7,0">
             <TextBlock Text="{Binding FileMenuText}" Foreground="{DynamicResource TextMuted}" FontSize="13" />
             <Button.ContextMenu>
@@ -787,7 +798,7 @@
             </Button.ContextMenu>
           </Button>
           <Border Width="0" Height="24" Background="Transparent" Margin="0,0,8,0" />
-          <Button Style="{StaticResource GhostButton}" Width="38" Height="30" Click="Appearance_Click" ToolTip="{Binding ToggleThemeToolTip}"><local:LucideIcon Icon="{Binding AppearanceIcon}" Size="15" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Center" /></Button>
+          <Button Style="{StaticResource GhostButton}" Width="38" Height="30" Click="Appearance_Click" ToolTip="{Binding ToggleThemeToolTip}" AutomationProperties.Name="{Binding ToggleThemeToolTip}"><local:LucideIcon Icon="{Binding AppearanceIcon}" Size="15" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Center" IsHitTestVisible="False" /></Button>
           <Button Style="{StaticResource ToolbarButton}" Click="TopExport_Click"><StackPanel Orientation="Horizontal"><local:LucideIcon Icon="download" Size="14" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Margin="0,0,7,0" /><TextBlock Text="{Binding ExportText}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" FontSize="12" /></StackPanel></Button>
           <Grid x:Name="BranchPickerHost" Visibility="Collapsed">
             <Button Style="{StaticResource ToolbarButton}" Click="TopBranches_Click">
@@ -878,7 +889,7 @@
                   <TextBlock Text="{Binding UpdatePopupDescription}" Foreground="{DynamicResource TextMuted}" FontSize="12" TextWrapping="Wrap" LineHeight="18" Margin="0,2,0,10" />
                   <TextBlock Text="{Binding UpdateDetailText}" Foreground="{DynamicResource TextDim}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,12" />
                   <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                    <Button Style="{StaticResource GhostButton}" Click="UpdateRefresh_Click" Padding="10,6" Margin="0,0,8,0"><TextBlock Text="刷新" Foreground="{DynamicResource TextMuted}" FontSize="12" /></Button>
+                    <Button Style="{StaticResource GhostButton}" Click="UpdateRefresh_Click" Padding="10,6" Margin="0,0,8,0"><TextBlock Text="{Binding RefreshLocalDataToolTip}" Foreground="{DynamicResource TextMuted}" FontSize="12" /></Button>
                     <Button Style="{StaticResource ToolbarButton}" Click="UpdateNow_Click" IsEnabled="{Binding CanApplyUpdate}" Padding="12,6"><TextBlock Text="{Binding UpdateActionText}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" FontSize="12" FontWeight="SemiBold" /></Button>
                   </StackPanel>
                 </StackPanel>
@@ -888,11 +899,11 @@
         </StackPanel>
         <Border Grid.Column="1" Background="Transparent" />
         <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" shell:WindowChrome.IsHitTestVisibleInChrome="True">
-          <Button Style="{StaticResource GhostButton}" Width="38" Height="42" Click="FileSettings_Click" ToolTip="{Binding SettingsToolTip}"><local:LucideIcon Icon="sliders-horizontal" Size="15" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Center" /></Button>
-          <Button Style="{StaticResource GhostButton}" Width="38" Height="42" Click="ToggleRightPanel_Click" ToolTip="{Binding ToggleRightPanelToolTip}"><local:LucideIcon Icon="panel-right" Size="15" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Center" /></Button>
-          <Button Style="{StaticResource GhostButton}" Width="46" Height="42" Click="Minimize_Click"><local:LucideIcon Icon="minus" Size="15" Stroke="{DynamicResource TextPrimary}" HorizontalAlignment="Center" /></Button>
-          <Button Style="{StaticResource GhostButton}" Width="46" Height="42" Click="MaximizeRestore_Click"><local:LucideIcon Icon="maximize" Size="14" Stroke="{DynamicResource TextPrimary}" HorizontalAlignment="Center" /></Button>
-          <Button Style="{StaticResource GhostButton}" Width="46" Height="42" Click="Close_Click"><local:LucideIcon Icon="x" Size="15" Stroke="{DynamicResource TextPrimary}" HorizontalAlignment="Center" /></Button>
+          <Button Style="{StaticResource GhostButton}" Width="38" Height="42" Click="FileSettings_Click" ToolTip="{Binding SettingsToolTip}" AutomationProperties.Name="{Binding SettingsToolTip}"><local:LucideIcon Icon="sliders-horizontal" Size="15" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Center" IsHitTestVisible="False" /></Button>
+          <Button Style="{StaticResource GhostButton}" Width="38" Height="42" Click="ToggleRightPanel_Click" ToolTip="{Binding ToggleRightPanelToolTip}" AutomationProperties.Name="{Binding ToggleRightPanelToolTip}"><local:LucideIcon Icon="panel-right" Size="15" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Center" IsHitTestVisible="False" /></Button>
+          <Button Style="{StaticResource GhostButton}" Width="46" Height="42" Click="Minimize_Click" AutomationProperties.Name="Minimize"><local:LucideIcon Icon="minus" Size="15" Stroke="{DynamicResource TextPrimary}" HorizontalAlignment="Center" IsHitTestVisible="False" /></Button>
+          <Button Style="{StaticResource GhostButton}" Width="46" Height="42" Click="MaximizeRestore_Click" AutomationProperties.Name="Maximize or restore"><local:LucideIcon Icon="maximize" Size="14" Stroke="{DynamicResource TextPrimary}" HorizontalAlignment="Center" IsHitTestVisible="False" /></Button>
+          <Button Style="{StaticResource GhostButton}" Width="46" Height="42" Click="Close_Click" AutomationProperties.Name="Close"><local:LucideIcon Icon="x" Size="15" Stroke="{DynamicResource TextPrimary}" HorizontalAlignment="Center" IsHitTestVisible="False" /></Button>
         </StackPanel>
       </Grid>
     </Border>
@@ -973,6 +984,10 @@
                             <Setter Property="Opacity" Value="1" />
                             <Setter Property="IsHitTestVisible" Value="True" />
                           </DataTrigger>
+                          <DataTrigger Binding="{Binding IsKeyboardFocusWithin, ElementName=ProjectsHeader}" Value="True">
+                            <Setter Property="Opacity" Value="1" />
+                            <Setter Property="IsHitTestVisible" Value="True" />
+                          </DataTrigger>
                         </Style.Triggers>
                       </Style>
                     </StackPanel.Style>
@@ -1015,8 +1030,12 @@
                           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,2,6,0">
                             <StackPanel.Style>
                               <Style TargetType="StackPanel">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                                <Style.Triggers><DataTrigger Binding="{Binding IsMouseOver, ElementName=ProjectRow}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+                                <Setter Property="Opacity" Value="0" />
+                                <Setter Property="IsHitTestVisible" Value="False" />
+                                <Style.Triggers>
+                                  <DataTrigger Binding="{Binding IsMouseOver, ElementName=ProjectRow}" Value="True"><Setter Property="Opacity" Value="1" /><Setter Property="IsHitTestVisible" Value="True" /></DataTrigger>
+                                  <DataTrigger Binding="{Binding IsKeyboardFocusWithin, ElementName=ProjectRow}" Value="True"><Setter Property="Opacity" Value="1" /><Setter Property="IsHitTestVisible" Value="True" /></DataTrigger>
+                                </Style.Triggers>
                               </Style>
                             </StackPanel.Style>
                             <Button Style="{StaticResource GhostButton}" Width="24" Height="24" Padding="0" Click="ProjectMenu_Click" ToolTip="{Binding DataContext.ProjectActionsText, RelativeSource={RelativeSource AncestorType=Window}}" Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}">
@@ -1075,7 +1094,7 @@
                                   </Grid>
                                 </Button>
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,4,0">
-                                  <StackPanel.Style><Style TargetType="StackPanel"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsMouseOver, ElementName=NestedSessionRow}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></StackPanel.Style>
+                                  <StackPanel.Style><Style TargetType="StackPanel"><Setter Property="Opacity" Value="0" /><Setter Property="IsHitTestVisible" Value="False" /><Style.Triggers><DataTrigger Binding="{Binding IsMouseOver, ElementName=NestedSessionRow}" Value="True"><Setter Property="Opacity" Value="1" /><Setter Property="IsHitTestVisible" Value="True" /></DataTrigger><DataTrigger Binding="{Binding IsKeyboardFocusWithin, ElementName=NestedSessionRow}" Value="True"><Setter Property="Opacity" Value="1" /><Setter Property="IsHitTestVisible" Value="True" /></DataTrigger></Style.Triggers></Style></StackPanel.Style>
                                   <Button Style="{StaticResource GhostButton}" Width="22" Height="22" Padding="0" Click="SessionPin_Click" ToolTip="Pin chat"><local:LucideIcon Icon="pin" Size="13" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Center" /></Button>
                                   <Button Style="{StaticResource GhostButton}" Width="22" Height="22" Padding="0" Click="SessionArchive_Click" ToolTip="Archive chat"><local:LucideIcon Icon="archive" Size="13" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Center" /></Button>
                                 </StackPanel>
@@ -1102,6 +1121,10 @@
                         <Setter Property="IsHitTestVisible" Value="False" />
                         <Style.Triggers>
                           <DataTrigger Binding="{Binding IsMouseOver, ElementName=ConversationsHeader}" Value="True">
+                            <Setter Property="Opacity" Value="1" />
+                            <Setter Property="IsHitTestVisible" Value="True" />
+                          </DataTrigger>
+                          <DataTrigger Binding="{Binding IsKeyboardFocusWithin, ElementName=ConversationsHeader}" Value="True">
                             <Setter Property="Opacity" Value="1" />
                             <Setter Property="IsHitTestVisible" Value="True" />
                           </DataTrigger>
@@ -1153,7 +1176,7 @@
                           </Grid>
                         </Button>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,4,0">
-                          <StackPanel.Style><Style TargetType="StackPanel"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsMouseOver, ElementName=SessionRow}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></StackPanel.Style>
+                          <StackPanel.Style><Style TargetType="StackPanel"><Setter Property="Opacity" Value="0" /><Setter Property="IsHitTestVisible" Value="False" /><Style.Triggers><DataTrigger Binding="{Binding IsMouseOver, ElementName=SessionRow}" Value="True"><Setter Property="Opacity" Value="1" /><Setter Property="IsHitTestVisible" Value="True" /></DataTrigger><DataTrigger Binding="{Binding IsKeyboardFocusWithin, ElementName=SessionRow}" Value="True"><Setter Property="Opacity" Value="1" /><Setter Property="IsHitTestVisible" Value="True" /></DataTrigger></Style.Triggers></Style></StackPanel.Style>
                           <Button Style="{StaticResource GhostButton}" Width="22" Height="22" Padding="0" Click="SessionPin_Click" ToolTip="Pin chat"><local:LucideIcon Icon="pin" Size="13" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Center" /></Button>
                           <Button Style="{StaticResource GhostButton}" Width="22" Height="22" Padding="0" Click="SessionArchive_Click" ToolTip="Archive chat"><local:LucideIcon Icon="archive" Size="13" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Center" /></Button>
                         </StackPanel>
@@ -1324,9 +1347,17 @@
       <StackPanel Grid.Row="2" MaxWidth="1580" HorizontalAlignment="Stretch" Margin="0,0,0,0"
                   Visibility="{Binding IsComposerVisible, Converter={StaticResource BoolToVisibility}}">
         <Border Background="{DynamicResource ComposerBg}" BorderBrush="{DynamicResource ComposerBorder}" BorderThickness="1" CornerRadius="8" Padding="8,4" MinHeight="46">
-          <Grid>
+          <Grid VerticalAlignment="Center">
             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="38" /><RowDefinition Height="0" /></Grid.RowDefinitions>
-            <ItemsControl ItemsSource="{Binding Attachments}" Margin="0">
+            <ItemsControl ItemsSource="{Binding Attachments}" Margin="0,0,0,8">
+              <ItemsControl.Style>
+                <Style TargetType="ItemsControl">
+                  <Setter Property="Visibility" Value="Visible" />
+                  <Style.Triggers>
+                    <Trigger Property="HasItems" Value="False"><Setter Property="Visibility" Value="Collapsed" /></Trigger>
+                  </Style.Triggers>
+                </Style>
+              </ItemsControl.Style>
               <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
               <ItemsControl.ItemTemplate>
                 <StaticResource ResourceKey="AttachmentTemplate" />
@@ -1337,9 +1368,10 @@
                          Foreground="{DynamicResource ComposerTextMuted}" FontSize="14" FontWeight="Regular" Margin="44,0,320,0" VerticalAlignment="Center" />
               <TextBox x:Name="MainPromptBox" Text="{Binding PromptText, UpdateSourceTrigger=PropertyChanged}" PreviewKeyDown="PromptBox_KeyDown" DataObject.Pasting="PromptBox_Pasting"
                        Background="Transparent" BorderThickness="0" Foreground="{DynamicResource ComposerTextPrimary}" CaretBrush="{DynamicResource ComposerCaretBrush}" Padding="0"
-                       FontSize="14" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Hidden" Margin="44,0,320,0" VerticalAlignment="Center" />
+                       FontSize="14" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Hidden" Margin="44,0,320,0" VerticalAlignment="Center" VerticalContentAlignment="Center"
+                       AutomationProperties.Name="Message" AutomationProperties.HelpText="Press Enter to send. Press Shift+Enter for a new line." />
             </Grid>
-            <Grid Grid.Row="1" Margin="0,-2,0,2" VerticalAlignment="Center">
+            <Grid Grid.Row="1" VerticalAlignment="Center">
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
@@ -1349,8 +1381,8 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
               </Grid.ColumnDefinitions>
-              <Button Grid.Column="0" Style="{StaticResource ComposerIconButton}" Width="30" Height="30" Click="AddFile_Click" Margin="0,0,8,0" ToolTip="{Binding AddFileToolTip}">
-                <local:LucideIcon Icon="plus" Size="15" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Margin="0,-1,0,0" />
+              <Button Grid.Column="0" Style="{StaticResource ComposerIconButton}" Width="30" Height="30" Click="AddFile_Click" Margin="0,0,8,0" ToolTip="{Binding AddFileToolTip}" AutomationProperties.Name="{Binding AddFileToolTip}">
+                <local:LucideIcon Icon="plus" Size="15" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
               </Button>
 
               <Grid Grid.Column="2" x:Name="MainApprovalPickerHost" Margin="0,0,10,0" Visibility="Collapsed">
@@ -1440,10 +1472,10 @@
               </Grid>
               <Grid Grid.Column="5" x:Name="MainVoicePickerHost" Margin="0,0,8,0">
                 <StackPanel Orientation="Horizontal">
-                  <Button Style="{StaticResource ComposerIconButton}" Width="30" Height="30" Click="Voice_Click" ToolTip="{Binding VoiceBackendLabel}">
+                  <Button Style="{StaticResource ComposerIconButton}" Width="30" Height="30" Click="Voice_Click" ToolTip="{Binding VoiceBackendLabel}" AutomationProperties.Name="{Binding VoiceBackendLabel}">
                     <local:LucideIcon Icon="{Binding VoiceButtonLabel}" Size="14" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" HorizontalAlignment="Center" />
                   </Button>
-                  <Button Width="16" Height="30" Style="{StaticResource GhostButton}" Click="VoicePicker_Click" ToolTip="{Binding VoiceModeToolTip}">
+                  <Button Width="16" Height="30" Style="{StaticResource GhostButton}" Click="VoicePicker_Click" ToolTip="{Binding VoiceModeToolTip}" AutomationProperties.Name="{Binding VoiceModeToolTip}">
                     <local:LucideIcon Icon="chevron-down" Size="11" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" HorizontalAlignment="Center" />
                   </Button>
                 </StackPanel>
@@ -1471,8 +1503,8 @@
                   </Border>
                 </Popup>
               </Grid>
-              <Button Grid.Column="6" Style="{StaticResource CodexSendButton}" Width="32" Height="32" Click="Send_Click" ToolTip="{Binding SendButtonToolTip}">
-                <local:LucideIcon Icon="{Binding SendButtonGlyph}" Size="14" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Margin="0,-1,0,0" />
+              <Button Grid.Column="6" Style="{StaticResource CodexSendButton}" Width="32" Height="32" Click="Send_Click" ToolTip="{Binding SendButtonToolTip}" AutomationProperties.Name="{Binding SendButtonToolTip}">
+                <local:LucideIcon Icon="{Binding SendButtonGlyph}" Size="14" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
               </Button>
             </Grid>
           </Grid>
@@ -1700,7 +1732,6 @@
           </ListBox.ItemsPanel>
           <ListBox.ItemContainerStyle>
             <Style TargetType="ListBoxItem">
-              <Setter Property="FocusVisualStyle" Value="{x:Null}" />
               <Setter Property="Focusable" Value="False" />
               <Setter Property="HorizontalContentAlignment" Value="Stretch" />
               <Setter Property="Background" Value="Transparent" />
@@ -1799,6 +1830,14 @@
                                 <Setter Property="Opacity" Value="1" />
                                 <Setter Property="IsHitTestVisible" Value="True" />
                               </MultiDataTrigger>
+                              <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                  <Condition Binding="{Binding CanUseAsSideContext}" Value="True" />
+                                  <Condition Binding="{Binding IsKeyboardFocusWithin, ElementName=MessageHoverRegion}" Value="True" />
+                                </MultiDataTrigger.Conditions>
+                                <Setter Property="Opacity" Value="1" />
+                                <Setter Property="IsHitTestVisible" Value="True" />
+                              </MultiDataTrigger>
                             </Style.Triggers>
                           </Style>
                         </StackPanel.Style>
@@ -1816,6 +1855,10 @@
                             <Setter Property="IsHitTestVisible" Value="False" />
                             <Style.Triggers>
                               <DataTrigger Binding="{Binding IsMouseOver, ElementName=MessageHoverRegion}" Value="True">
+                                <Setter Property="Opacity" Value="1" />
+                                <Setter Property="IsHitTestVisible" Value="True" />
+                              </DataTrigger>
+                              <DataTrigger Binding="{Binding IsKeyboardFocusWithin, ElementName=MessageHoverRegion}" Value="True">
                                 <Setter Property="Opacity" Value="1" />
                                 <Setter Property="IsHitTestVisible" Value="True" />
                               </DataTrigger>
@@ -1953,7 +1996,8 @@
         </Grid>
       </Grid>
 
-      <ItemsControl Grid.Row="2" ItemsSource="{Binding ToolApprovalRequests}" MaxWidth="1060" HorizontalAlignment="Stretch" Margin="40,0,40,10">
+      <ItemsControl Grid.Row="2" ItemsSource="{Binding ToolApprovalRequests}" MaxWidth="1060" HorizontalAlignment="Stretch" Margin="40,0,40,10"
+                    AutomationProperties.Name="Tool approval requests" AutomationProperties.LiveSetting="Assertive">
         <ItemsControl.ItemTemplate>
           <DataTemplate>
             <Border Background="{DynamicResource ComposerBg}" BorderBrush="#6D8DFF" BorderThickness="1" CornerRadius="14" Padding="14" Margin="0,0,0,8">
@@ -1984,9 +2028,17 @@
 
       <StackPanel Grid.Row="3" MaxWidth="1580" HorizontalAlignment="Stretch" Margin="0,0,0,0">
         <Border Background="{DynamicResource ComposerBg}" BorderBrush="{DynamicResource ComposerBorder}" BorderThickness="1" CornerRadius="8" Padding="8,4" MaxWidth="1580" MinHeight="46" HorizontalAlignment="Stretch" Margin="0,0,0,0">
-        <Grid>
+        <Grid VerticalAlignment="Center">
           <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="38" /><RowDefinition Height="0" /></Grid.RowDefinitions>
           <ItemsControl ItemsSource="{Binding Attachments}" Margin="0,0,0,8">
+            <ItemsControl.Style>
+              <Style TargetType="ItemsControl">
+                <Setter Property="Visibility" Value="Visible" />
+                <Style.Triggers>
+                  <Trigger Property="HasItems" Value="False"><Setter Property="Visibility" Value="Collapsed" /></Trigger>
+                </Style.Triggers>
+              </Style>
+            </ItemsControl.Style>
             <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
               <StaticResource ResourceKey="AttachmentTemplate" />
@@ -1997,11 +2049,12 @@
                        Foreground="{DynamicResource ComposerTextMuted}" FontSize="14" FontWeight="Regular" Margin="44,0,320,0" VerticalAlignment="Center" />
             <TextBox x:Name="ChatPromptBox" Text="{Binding PromptText, UpdateSourceTrigger=PropertyChanged}" PreviewKeyDown="PromptBox_KeyDown" DataObject.Pasting="PromptBox_Pasting"
                      Background="Transparent" BorderThickness="0" Foreground="{DynamicResource ComposerTextPrimary}" CaretBrush="{DynamicResource ComposerCaretBrush}" Padding="0"
-                     FontSize="14" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Hidden" Margin="44,0,320,0" VerticalAlignment="Center" />
+                     FontSize="14" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Hidden" Margin="44,0,320,0" VerticalAlignment="Center" VerticalContentAlignment="Center"
+                     AutomationProperties.Name="Message" AutomationProperties.HelpText="Press Enter to send. Press Shift+Enter for a new line." />
           </Grid>
-          <Grid Grid.Row="1" Margin="0,-2,0,2" VerticalAlignment="Center">
+          <Grid Grid.Row="1" VerticalAlignment="Center">
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-            <Button Grid.Column="0" Style="{StaticResource ComposerIconButton}" Width="30" Height="30" Click="AddFile_Click" Margin="0,0,8,0" ToolTip="{Binding AddFileToolTip}"><local:LucideIcon Icon="plus" Size="15" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Margin="0,-1,0,0" /></Button>
+            <Button Grid.Column="0" Style="{StaticResource ComposerIconButton}" Width="30" Height="30" Click="AddFile_Click" Margin="0,0,8,0" ToolTip="{Binding AddFileToolTip}" AutomationProperties.Name="{Binding AddFileToolTip}"><local:LucideIcon Icon="plus" Size="15" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" IsHitTestVisible="False" /></Button>
 
             <Grid Grid.Column="1" x:Name="ChatApprovalPickerHost" Margin="0,0,10,0" Visibility="Collapsed">
               <Button Style="{StaticResource ComposerPillButton}" Click="ChatApproval_Click">
@@ -2090,8 +2143,8 @@
             </Grid>
             <Grid Grid.Column="5" x:Name="ChatVoicePickerHost" Margin="0,0,8,0">
               <StackPanel Orientation="Horizontal">
-                <Button Style="{StaticResource ComposerIconButton}" Width="30" Height="30" Click="Voice_Click" ToolTip="{Binding VoiceBackendLabel}"><local:LucideIcon Icon="{Binding VoiceButtonLabel}" Size="14" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" HorizontalAlignment="Center" /></Button>
-                <Button Width="16" Height="30" Style="{StaticResource ComposerIconButton}" Click="VoicePicker_Click" ToolTip="{Binding VoiceModeToolTip}"><local:LucideIcon Icon="chevron-down" Size="11" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" HorizontalAlignment="Center" /></Button>
+                <Button Style="{StaticResource ComposerIconButton}" Width="30" Height="30" Click="Voice_Click" ToolTip="{Binding VoiceBackendLabel}" AutomationProperties.Name="{Binding VoiceBackendLabel}"><local:LucideIcon Icon="{Binding VoiceButtonLabel}" Size="14" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" HorizontalAlignment="Center" IsHitTestVisible="False" /></Button>
+                <Button Width="16" Height="30" Style="{StaticResource ComposerIconButton}" Click="VoicePicker_Click" ToolTip="{Binding VoiceModeToolTip}" AutomationProperties.Name="{Binding VoiceModeToolTip}"><local:LucideIcon Icon="chevron-down" Size="11" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" HorizontalAlignment="Center" IsHitTestVisible="False" /></Button>
               </StackPanel>
               <Popup PlacementTarget="{Binding ElementName=ChatVoicePickerHost}" Placement="Top" VerticalOffset="-8" AllowsTransparency="True" StaysOpen="False" IsOpen="{Binding IsChatVoicePickerOpen, Mode=TwoWay}" DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
                 <Border Width="380" Background="{DynamicResource PopupBg}" BorderBrush="{DynamicResource PopupBorder}" BorderThickness="1" CornerRadius="14" Padding="12">
@@ -2117,7 +2170,7 @@
                 </Border>
               </Popup>
             </Grid>
-            <Button Grid.Column="6" Style="{StaticResource CodexSendButton}" Width="32" Height="32" Click="Send_Click" ToolTip="{Binding SendButtonToolTip}"><local:LucideIcon Icon="{Binding SendButtonGlyph}" Size="14" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Margin="0,-1,0,0" /></Button>
+            <Button Grid.Column="6" Style="{StaticResource CodexSendButton}" Width="32" Height="32" Click="Send_Click" ToolTip="{Binding SendButtonToolTip}" AutomationProperties.Name="{Binding SendButtonToolTip}"><local:LucideIcon Icon="{Binding SendButtonGlyph}" Size="14" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" IsHitTestVisible="False" /></Button>
           </Grid>
         </Grid>
       </Border>
@@ -2246,6 +2299,10 @@
             <local:LucideIcon Icon="zap" Size="13" Stroke="{DynamicResource TextDim}" Margin="0,0,6,0" />
             <TextBlock Text="{Binding LocalReadyText}" Foreground="{DynamicResource TextDim}" FontSize="12" />
           </StackPanel>
+          <Border Width="1" Height="14" Background="{DynamicResource Line}" Margin="10,0" />
+          <TextBlock x:Name="BottomLiveStatusText" Text="{Binding StatusText}" Foreground="{DynamicResource TextMuted}" FontSize="12"
+                     MaxWidth="420" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                     AutomationProperties.Name="Status" AutomationProperties.LiveSetting="Polite" />
           <Grid x:Name="BottomApprovalPickerHost" Margin="10,0,0,0">
             <Button Style="{StaticResource GhostButton}" Height="24" Padding="4,0" Click="BottomApproval_Click" ToolTip="{Binding ApprovalModeToolTip}">
               <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -2352,7 +2409,7 @@
           <Grid DockPanel.Dock="Top" Margin="0,0,0,18">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <TextBlock Text="{Binding RightPanelText}" Foreground="{DynamicResource TextDim}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" />
-            <Button Grid.Column="1" Style="{StaticResource GhostButton}" Width="28" Height="28" Padding="0" Click="CloseRightPanel_Click" ToolTip="Close">
+            <Button Grid.Column="1" Style="{StaticResource GhostButton}" Width="28" Height="28" Padding="0" Click="CloseRightPanel_Click" ToolTip="Close" AutomationProperties.Name="Close side panel">
               <local:LucideIcon Icon="x" Size="14" Stroke="{DynamicResource TextDim}" HorizontalAlignment="Center" />
             </Button>
           </Grid>
@@ -2385,12 +2442,12 @@
               <TextBlock Text="{Binding SideTerminalTitle}" Foreground="{DynamicResource TextPrimary}" FontSize="16" FontWeight="SemiBold" />
               <TextBlock Text="{Binding SideTerminalCwd}" Foreground="{DynamicResource TextDim}" FontSize="11" Margin="0,6,0,0" TextTrimming="CharacterEllipsis" />
             </StackPanel>
-            <Button Grid.Column="1" Style="{StaticResource GhostButton}" Width="28" Height="28" Padding="0" Click="CloseRightPanel_Click"><local:LucideIcon Icon="x" Size="14" Stroke="{DynamicResource TextDim}" HorizontalAlignment="Center" /></Button>
+            <Button Grid.Column="1" Style="{StaticResource GhostButton}" Width="28" Height="28" Padding="0" Click="CloseRightPanel_Click" AutomationProperties.Name="Close terminal"><local:LucideIcon Icon="x" Size="14" Stroke="{DynamicResource TextDim}" HorizontalAlignment="Center" IsHitTestVisible="False" /></Button>
           </Grid>
           <Grid DockPanel.Dock="Bottom" Margin="0,12,0,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <Border Background="{DynamicResource RowBg}" BorderBrush="{DynamicResource PopupBorder}" BorderThickness="1" CornerRadius="9" Padding="10,0" Height="34">
-              <TextBox Text="{Binding SideTerminalCommand, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimary}" FontFamily="{DynamicResource IpiCodeFontFamily}" FontSize="12" VerticalContentAlignment="Center" />
+              <TextBox Text="{Binding SideTerminalCommand, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimary}" FontFamily="{DynamicResource IpiCodeFontFamily}" FontSize="12" VerticalContentAlignment="Center" AutomationProperties.Name="Terminal command" />
             </Border>
             <Button Grid.Column="1" Style="{StaticResource ToolbarButton}" Click="SideTerminalRun_Click" Margin="8,0,0,0"><TextBlock Text="{Binding SideTerminalRunText}" Foreground="{DynamicResource TextPrimary}" FontSize="12" FontWeight="SemiBold" /></Button>
           </Grid>
@@ -2403,11 +2460,11 @@
             <Border Background="{DynamicResource RowBg}" BorderBrush="{DynamicResource PopupBorder}" BorderThickness="1" CornerRadius="9" Padding="10,0" Height="34" Margin="0,0,8,0">
               <Grid>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="28" /></Grid.ColumnDefinitions>
-                <TextBox Text="{Binding SideBrowserUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" KeyDown="SideBrowserAddress_KeyDown" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimary}" FontFamily="{DynamicResource IpiCodeFontFamily}" FontSize="12" VerticalContentAlignment="Center" />
+                <TextBox x:Name="SideBrowserAddressBox" Text="{Binding SideBrowserUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" KeyDown="SideBrowserAddress_KeyDown" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimary}" FontFamily="{DynamicResource IpiCodeFontFamily}" FontSize="12" VerticalContentAlignment="Center" AutomationProperties.Name="Browser address" />
                 <Button Grid.Column="1" Style="{StaticResource GhostButton}" Width="24" Height="24" Padding="0" Click="SideBrowserOpen_Click" ToolTip="{Binding SideBrowserOpenText}"><local:LucideIcon Icon="external-link" Size="13" Stroke="{DynamicResource TextDim}" HorizontalAlignment="Center" /></Button>
               </Grid>
             </Border>
-            <Button Grid.Column="1" Style="{StaticResource GhostButton}" Width="28" Height="28" Padding="0" Click="CloseRightPanel_Click"><local:LucideIcon Icon="x" Size="14" Stroke="{DynamicResource TextDim}" HorizontalAlignment="Center" /></Button>
+            <Button Grid.Column="1" Style="{StaticResource GhostButton}" Width="28" Height="28" Padding="0" Click="CloseRightPanel_Click" AutomationProperties.Name="Close browser"><local:LucideIcon Icon="x" Size="14" Stroke="{DynamicResource TextDim}" HorizontalAlignment="Center" IsHitTestVisible="False" /></Button>
           </Grid>
           <Border BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="9" ClipToBounds="True" Background="{DynamicResource RowBg}">
             <wv2:WebView2 x:Name="SideBrowserWebView" Source="{Binding SideBrowserUri}" NavigationStarting="SideBrowserWebView_NavigationStarting" NavigationCompleted="SideBrowserWebView_NavigationCompleted" />
@@ -2418,7 +2475,7 @@
           <Grid DockPanel.Dock="Top" Margin="0,0,0,12">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <TextBlock Text="{Binding SideFilesTitle}" Foreground="{DynamicResource TextPrimary}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
-            <Button Grid.Column="1" Style="{StaticResource GhostButton}" Width="28" Height="28" Padding="0" Click="CloseRightPanel_Click"><local:LucideIcon Icon="x" Size="14" Stroke="{DynamicResource TextDim}" HorizontalAlignment="Center" /></Button>
+            <Button Grid.Column="1" Style="{StaticResource GhostButton}" Width="28" Height="28" Padding="0" Click="CloseRightPanel_Click" AutomationProperties.Name="Close files"><local:LucideIcon Icon="x" Size="14" Stroke="{DynamicResource TextDim}" HorizontalAlignment="Center" IsHitTestVisible="False" /></Button>
           </Grid>
           <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <ItemsControl ItemsSource="{Binding RightPanelFileItems}">
@@ -2442,7 +2499,7 @@
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <TextBlock Text="{Binding SideChatTitle}" Foreground="{DynamicResource TextPrimary}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
             <Button Grid.Column="1" Style="{StaticResource GhostButton}" Width="28" Height="28" Padding="0" Click="SideChatNew_Click" ToolTip="{Binding NewTemporarySideChatText}"><local:LucideIcon Icon="plus" Size="14" Stroke="{DynamicResource TextDim}" HorizontalAlignment="Center" /></Button>
-            <Button Grid.Column="2" Style="{StaticResource GhostButton}" Width="28" Height="28" Padding="0" Click="CloseRightPanel_Click"><local:LucideIcon Icon="x" Size="14" Stroke="{DynamicResource TextDim}" HorizontalAlignment="Center" /></Button>
+            <Button Grid.Column="2" Style="{StaticResource GhostButton}" Width="28" Height="28" Padding="0" Click="CloseRightPanel_Click" AutomationProperties.Name="Close side chat"><local:LucideIcon Icon="x" Size="14" Stroke="{DynamicResource TextDim}" HorizontalAlignment="Center" IsHitTestVisible="False" /></Button>
           </Grid>
           <Border DockPanel.Dock="Bottom" Background="{DynamicResource ComposerBg}" BorderBrush="{DynamicResource ComposerBorder}" BorderThickness="1" CornerRadius="16" Padding="12" Margin="0,12,0,0">
             <StackPanel>
@@ -2452,7 +2509,7 @@
                   <TextBlock Text="{Binding SideChatContextLabel}" Foreground="{DynamicResource TextPrimary}" FontSize="12" FontWeight="SemiBold" />
                 </StackPanel>
               </Border>
-              <TextBox Text="{Binding SideChatInputText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PreviewKeyDown="SideChatInput_KeyDown" MinHeight="42" MaxHeight="110" AcceptsReturn="True" TextWrapping="Wrap" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimary}" CaretBrush="{DynamicResource CaretBrush}" SelectionBrush="{DynamicResource SelectionBrush}" FontSize="13" Padding="0" />
+              <TextBox Text="{Binding SideChatInputText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PreviewKeyDown="SideChatInput_KeyDown" MinHeight="42" MaxHeight="110" AcceptsReturn="True" TextWrapping="Wrap" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimary}" CaretBrush="{DynamicResource CaretBrush}" SelectionBrush="{DynamicResource SelectionBrush}" FontSize="13" Padding="0" AutomationProperties.Name="Side chat message" AutomationProperties.HelpText="Press Enter to send. Press Shift+Enter for a new line." />
               <Grid Margin="0,8,0,0">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <TextBlock Text="{Binding SideChatTemporaryNote}" Foreground="{DynamicResource TextDim}" FontSize="11" VerticalAlignment="Center" />
@@ -2512,7 +2569,7 @@
               <TextBlock Text="{Binding FilePanelTitle}" Foreground="{DynamicResource TextPrimary}" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
               <TextBlock Text="{Binding FilePanelPath}" Foreground="{DynamicResource TextDim}" FontSize="12" Margin="0,7,0,0" TextTrimming="CharacterEllipsis" />
             </StackPanel>
-            <Button Grid.Column="1" Style="{StaticResource GhostButton}" Width="28" Height="28" Padding="0" Click="CloseRightPanel_Click" ToolTip="Close">
+            <Button Grid.Column="1" Style="{StaticResource GhostButton}" Width="28" Height="28" Padding="0" Click="CloseRightPanel_Click" ToolTip="Close" AutomationProperties.Name="Close file preview">
               <local:LucideIcon Icon="x" Size="14" Stroke="{DynamicResource TextDim}" HorizontalAlignment="Center" />
             </Button>
             <Grid Grid.Row="1" Grid.ColumnSpan="2" Margin="0,12,0,0">
@@ -2539,7 +2596,7 @@
                 <TextBlock Text="{Binding FilePanelText}" Foreground="{DynamicResource TextPrimary}" FontFamily="{DynamicResource IpiCodeFontFamily}" FontSize="12.5" TextWrapping="Wrap" LineHeight="19" />
               </ScrollViewer>
             </Border>
-            <TextBox Visibility="{Binding FileRawEditorVisibility}" Text="{Binding FilePanelText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" AcceptsTab="True" TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="Transparent" BorderBrush="{DynamicResource Line}" BorderThickness="1" Foreground="{DynamicResource TextPrimary}" FontFamily="{DynamicResource IpiCodeFontFamily}" FontSize="12.5" Padding="12">
+            <TextBox Visibility="{Binding FileRawEditorVisibility}" Text="{Binding FilePanelText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" AcceptsTab="True" TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="Transparent" BorderBrush="{DynamicResource Line}" BorderThickness="1" Foreground="{DynamicResource TextPrimary}" FontFamily="{DynamicResource IpiCodeFontFamily}" FontSize="12.5" Padding="12" AutomationProperties.Name="File editor">
               <TextBox.Resources>
                 <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource IpiThinScrollBar}" />
               </TextBox.Resources>

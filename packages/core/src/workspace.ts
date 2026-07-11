@@ -15,6 +15,8 @@ export async function openWorkspace(inputPath = process.cwd()): Promise<Workspac
     id: workspaceId(rootPath),
     rootPath,
     name: path.basename(rootPath) || rootPath,
-    trusted: true,
+    // Trust must be granted by a user-facing workflow. Merely opening a path is
+    // never evidence that project-owned code or configuration is safe to run.
+    trusted: false,
   };
 }

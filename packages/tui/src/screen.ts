@@ -1,6 +1,7 @@
 import readline from "node:readline";
 import { stdin, stdout } from "node:process";
 import { AgentRunner, createInitialAppState, createToolPolicy, openWorkspace, SessionStore, type AppState, type RunEvent } from "../../core/src/index.js";
+import { sanitizeTerminalLine } from "./terminal-sanitize.js";
 
 const ESC = "\x1b[";
 
@@ -121,7 +122,7 @@ export class IpiScreenApp {
 
     clear();
     move(1, 1); stdout.write(style("1;38;5;147") + "ipi" + style("0m") + "  ");
-    stdout.write(clip(`${this.state.workspace?.name ?? "no workspace"}  ·  tools ${this.state.tools.mode}  ·  ${this.status}`, width - 7));
+    stdout.write(clip(`${sanitizeTerminalLine(this.state.workspace?.name ?? "no workspace")}  ·  tools ${this.state.tools.mode}  ·  ${sanitizeTerminalLine(this.status)}`, width - 7));
     move(2, 1); stdout.write(style("38;5;238") + line(width) + style("0m"));
 
     this.renderRail(bodyTop, 1, railW, bodyH);
@@ -129,12 +130,12 @@ export class IpiScreenApp {
     this.renderInspector(bodyTop, railW + timelineW + 3, inspectorW, bodyH);
 
     move(composerTop, 1); stdout.write(style("38;5;238") + line(width) + style("0m"));
-    move(composerTop + 1, 1); stdout.write(style("38;5;244") + "prompt " + style("0m") + clip(this.input, width - 8));
+    move(composerTop + 1, 1); stdout.write(style("38;5;244") + "prompt " + style("0m") + clip(sanitizeTerminalLine(this.input), width - 8));
     move(composerTop + 2, 1); stdout.write(style("38;5;240") + "Enter send · /help commands · Esc quit" + style("0m"));
   }
 
   private renderRail(row: number, col: number, w: number, h: number): void {
-    const items = ["Workspace", `  ${this.state.workspace?.name ?? "-"}`, "", "Sessions", "Files", "Search", "Skills", "Models", "Settings"];
+    const items = ["Workspace", `  ${sanitizeTerminalLine(this.state.workspace?.name ?? "-")}`, "", "Sessions", "Files", "Search", "Skills", "Models", "Settings"];
     move(row, col); stdout.write(style("38;5;244") + boxTitle("workspace", w) + style("0m"));
     for (let i = 0; i < h - 1; i++) {
       move(row + 1 + i, col);
@@ -148,9 +149,9 @@ export class IpiScreenApp {
     move(row, col); stdout.write(style("38;5;244") + boxTitle("timeline", w) + style("0m"));
     const lines: string[] = [];
     for (const event of this.state.events) {
-      if (event.type === "state") lines.push(style("38;5;244") + `[${event.label}] ${event.detail ?? ""}` + style("0m"));
-      if (event.type === "user-message") lines.push(style("38;5;111") + "user" + style("0m"), `  ${event.text}`);
-      if (event.type === "assistant-message") lines.push(style("38;5;151") + "assistant" + style("0m"), `  ${event.text}`);
+      if (event.type === "state") lines.push(style("38;5;244") + `[${sanitizeTerminalLine(event.label)}] ${sanitizeTerminalLine(event.detail ?? "")}` + style("0m"));
+      if (event.type === "user-message") lines.push(style("38;5;111") + "user" + style("0m"), `  ${sanitizeTerminalLine(event.text)}`);
+      if (event.type === "assistant-message") lines.push(style("38;5;151") + "assistant" + style("0m"), `  ${sanitizeTerminalLine(event.text)}`);
     }
     const visible = lines.slice(-(h - 1));
     for (let i = 0; i < h - 1; i++) {

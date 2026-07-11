@@ -32,17 +32,18 @@ export class AgentRunner {
   async send(message: string): Promise<void> {
     if (this.running) throw new Error("A run is already active");
     this.running = true;
-
-    this.emit({ type: "user-message", id: id("user"), text: message, timestamp: now() });
-    this.emit({ type: "state", id: id("state"), label: "agent placeholder", detail: "Real agent integration comes next.", timestamp: now() });
-    this.emit({
-      type: "assistant-message",
-      id: id("assistant"),
-      text: `I received: ${message}`,
-      timestamp: now(),
-    });
-
-    this.running = false;
+    try {
+      this.emit({ type: "user-message", id: id("user"), text: message, timestamp: now() });
+      this.emit({ type: "state", id: id("state"), label: "agent placeholder", detail: "Real agent integration comes next.", timestamp: now() });
+      this.emit({
+        type: "assistant-message",
+        id: id("assistant"),
+        text: `I received: ${message}`,
+        timestamp: now(),
+      });
+    } finally {
+      this.running = false;
+    }
   }
 
   async abort(): Promise<void> {

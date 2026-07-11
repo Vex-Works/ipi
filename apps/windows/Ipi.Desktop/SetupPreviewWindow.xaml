@@ -7,7 +7,7 @@
         WindowStartupLocation="CenterScreen" WindowStyle="None" ResizeMode="CanResize"
         Background="#EEF1F7" UseLayoutRounding="True" SnapsToDevicePixels="True"
         Icon="Assets/Brand/app/ipi-icon.ico"
-        Loaded="SetupPreviewWindow_Loaded">
+        Loaded="SetupPreviewWindow_Loaded" Closing="SetupPreviewWindow_Closing">
   <shell:WindowChrome.WindowChrome>
     <shell:WindowChrome CaptionHeight="42" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False" />
   </shell:WindowChrome.WindowChrome>
@@ -19,7 +19,7 @@
     <SolidColorBrush x:Key="SetupPanel" Color="#F9FAFE" />
     <SolidColorBrush x:Key="SetupText" Color="#242733" />
     <SolidColorBrush x:Key="SetupMuted" Color="#626A7A" />
-    <SolidColorBrush x:Key="SetupDim" Color="#8C95A6" />
+    <SolidColorBrush x:Key="SetupDim" Color="#656D7D" />
     <SolidColorBrush x:Key="SetupLine" Color="#CBD3E6" />
     <SolidColorBrush x:Key="SetupSoftLine" Color="#DDE4F2" />
     <SolidColorBrush x:Key="SetupAccent" Color="#242733" />
@@ -37,6 +37,17 @@
       <Setter Property="Foreground" Value="{StaticResource SetupText}" />
       <Setter Property="CaretBrush" Value="{StaticResource SetupAccent}" />
       <Setter Property="SelectionBrush" Value="#B9C8F6" />
+      <Setter Property="FocusVisualStyle" Value="{DynamicResource SetupKeyboardFocusStyle}" />
+    </Style>
+
+    <Style x:Key="SetupKeyboardFocusStyle" TargetType="Control">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate>
+            <Border BorderBrush="{StaticResource SetupAccent}" BorderThickness="2" CornerRadius="8" Margin="-3" SnapsToDevicePixels="True" />
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>
 
     <Style x:Key="SetupButton" TargetType="Button">
@@ -50,6 +61,7 @@
       <Setter Property="FontSize" Value="13" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="FocusVisualStyle" Value="{StaticResource SetupKeyboardFocusStyle}" />
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
@@ -77,6 +89,7 @@
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Padding" Value="0" />
       <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="FocusVisualStyle" Value="{StaticResource SetupKeyboardFocusStyle}" />
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
@@ -128,6 +141,7 @@
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="FocusVisualStyle" Value="{StaticResource SetupKeyboardFocusStyle}" />
       <Setter Property="RenderTransformOrigin" Value="0.5,0.5" />
       <Setter Property="RenderTransform"><Setter.Value><ScaleTransform ScaleX="1" ScaleY="1" /></Setter.Value></Setter>
       <Setter Property="Template">
@@ -200,9 +214,9 @@
           </Grid.ColumnDefinitions>
           <Image Source="Assets/Brand/export/black/ipi-word-black.png" Height="15" Width="42" Stretch="Uniform" VerticalAlignment="Center" Margin="15,0,0,0" RenderOptions.BitmapScalingMode="NearestNeighbor" />
           <TextBlock Grid.Column="1" Text="Setup" Foreground="{StaticResource SetupMuted}" FontSize="12" VerticalAlignment="Center" Margin="7,0,0,0" />
-          <Button Grid.Column="3" Style="{StaticResource GhostSetupButton}" Click="Minimize_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True"><TextBlock Text="—" Foreground="{StaticResource SetupMuted}" FontSize="14" /></Button>
-          <Button Grid.Column="4" Style="{StaticResource GhostSetupButton}" Click="MaximizeRestore_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True"><TextBlock Text="□" Foreground="{StaticResource SetupMuted}" FontSize="11" /></Button>
-          <Button Grid.Column="5" Style="{StaticResource GhostSetupButton}" Click="Close_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True"><TextBlock Text="×" Foreground="{StaticResource SetupMuted}" FontSize="18" Margin="0,-2,0,0" /></Button>
+          <Button Grid.Column="3" Style="{StaticResource GhostSetupButton}" Click="Minimize_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True" AutomationProperties.Name="Minimize"><TextBlock Text="—" Foreground="{StaticResource SetupMuted}" FontSize="14" /></Button>
+          <Button Grid.Column="4" Style="{StaticResource GhostSetupButton}" Click="MaximizeRestore_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True" AutomationProperties.Name="Maximize or restore"><TextBlock Text="□" Foreground="{StaticResource SetupMuted}" FontSize="11" /></Button>
+          <Button Grid.Column="5" Style="{StaticResource GhostSetupButton}" Click="Close_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True" AutomationProperties.Name="Close"><TextBlock Text="×" Foreground="{StaticResource SetupMuted}" FontSize="18" Margin="0,-2,0,0" /></Button>
         </Grid>
       </Border>
 
@@ -220,15 +234,15 @@
           <Border Background="#F7F9FD" BorderBrush="{StaticResource SetupSoftLine}" BorderThickness="1" CornerRadius="10" Padding="12,10" Margin="0,28,0,0">
             <Grid>
               <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-              <TextBlock Text="Install location" Foreground="{StaticResource SetupMuted}" FontSize="11" FontWeight="SemiBold" Margin="2,0,0,7" />
+              <TextBlock x:Name="InstallPathLabel" Text="Install location" Foreground="{StaticResource SetupMuted}" FontSize="11" FontWeight="SemiBold" Margin="2,0,0,7" />
               <Grid Grid.Row="1">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="88" /></Grid.ColumnDefinitions>
-                <TextBox Text="{Binding InstallPath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="32" Background="Transparent" BorderBrush="{StaticResource SetupSoftLine}" BorderThickness="0" Padding="2,0" VerticalContentAlignment="Center" FontSize="12" />
-                <Button Grid.Column="1" Style="{StaticResource SecondaryButton}" Click="BrowseInstallPath_Click" Content="Browse" Width="80" Height="32" MinWidth="0" FontSize="12" HorizontalAlignment="Right" />
+                <TextBox x:Name="InstallPathBox" Text="{Binding InstallPath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="32" Background="Transparent" BorderBrush="{StaticResource SetupSoftLine}" BorderThickness="0" Padding="2,0" VerticalContentAlignment="Center" FontSize="12" AutomationProperties.LabeledBy="{Binding ElementName=InstallPathLabel}" />
+                <Button Grid.Column="1" Style="{StaticResource SecondaryButton}" Click="BrowseInstallPath_Click" Content="Browse" Width="80" Height="32" MinWidth="0" FontSize="12" HorizontalAlignment="Right" AutomationProperties.Name="Browse install location" />
               </Grid>
             </Grid>
           </Border>
-          <Button Style="{StaticResource SetupButton}" Click="ShowProgress_Click" HorizontalAlignment="Center" Width="148" Margin="0,26,0,0">
+          <Button Style="{StaticResource SetupButton}" Click="ShowProgress_Click" HorizontalAlignment="Center" Width="148" Margin="0,26,0,0" AutomationProperties.Name="Continue setup">
             <StackPanel Orientation="Horizontal"><TextBlock Text="Continue" Foreground="White" FontSize="13" FontWeight="SemiBold" /><TextBlock Text="  →" Foreground="White" FontSize="16" Margin="5,-1,0,0" /></StackPanel>
           </Button>
         </StackPanel>
@@ -254,7 +268,7 @@
               <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
               <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                 <local:LucideIcon Icon="loader" Size="14" Stroke="{StaticResource SetupAccent}" Margin="0,0,10,0" />
-                <TextBlock Text="{Binding CurrentStep}" FontSize="13" Foreground="{StaticResource SetupText}" />
+                <TextBlock Text="{Binding CurrentStep}" FontSize="13" Foreground="{StaticResource SetupText}" AutomationProperties.LiveSetting="Polite" />
               </StackPanel>
               <TextBlock Grid.Column="1" Text="{Binding StepCounter}" FontSize="12" Foreground="{StaticResource SetupDim}" VerticalAlignment="Center" />
             </Grid>
@@ -341,7 +355,8 @@
               </Button>
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-              <Button Style="{StaticResource SecondaryButton}" Content="{Binding CloseButtonText}" Click="Close_Click" Width="86" Height="34" FontSize="12" Margin="0,0,10,0" />
+              <Button Style="{StaticResource SecondaryButton}" Content="{Binding CloseButtonText}" Click="Close_Click" Width="86" Height="34" FontSize="12" Margin="0,0,10,0" AutomationProperties.Name="{Binding CloseButtonText}" />
+              <Button Style="{StaticResource SecondaryButton}" Content="Retry copy" Click="RetryInstall_Click" Width="104" Height="34" FontSize="12" Margin="0,0,10,0" Visibility="{Binding ApplicationInstallRetryVisibility}" AutomationProperties.Name="Retry application file copy" />
               <Button Style="{StaticResource SetupButton}" Click="InstallRuntime_Click" Width="132" Height="34" FontSize="12" Margin="0,0,10,0" Visibility="{Binding InstallRuntimeButtonVisibility}" AutomationProperties.Name="Install runtime"><TextBlock Text="Install runtime" Foreground="White" FontSize="12" FontWeight="SemiBold" /></Button>
               <Button Style="{StaticResource SetupButton}" Click="Continue_Click" Width="108" Height="34" FontSize="12" Visibility="{Binding ContinueButtonVisibility}" AutomationProperties.Name="Continue">
                 <StackPanel Orientation="Horizontal">
@@ -393,7 +408,7 @@
                     <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding ProviderSearchText}" Value=""><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
                   </TextBlock>
                 </StackPanel>
-                <TextBox Text="{Binding ProviderSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Background="Transparent" BorderThickness="0" Padding="24,0,0,0" VerticalContentAlignment="Center" FontSize="12.5" />
+                <TextBox x:Name="SetupProviderSearchBox" Text="{Binding ProviderSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Background="Transparent" BorderThickness="0" Padding="24,0,0,0" VerticalContentAlignment="Center" FontSize="12.5" AutomationProperties.Name="Search providers" />
               </Grid>
             </Border>
             <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -422,28 +437,30 @@
             </ScrollViewer>
           </Grid>
 
-          <Grid Grid.Row="2" Visibility="{Binding ProviderConfigVisibility}">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="120" /><ColumnDefinition Width="420" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-            <Button Width="82" Height="30" HorizontalAlignment="Left" VerticalAlignment="Top" Style="{StaticResource GhostSetupButton}" Click="ProviderBack_Click">
-              <StackPanel Orientation="Horizontal"><local:LucideIcon Icon="arrow-left" Size="13" Stroke="{StaticResource SetupMuted}" Margin="0,0,6,0" /><TextBlock Text="Back" Foreground="{StaticResource SetupMuted}" FontSize="12.5" /></StackPanel>
-            </Button>
-            <StackPanel Grid.Column="1">
-              <TextBlock Text="{Binding ProviderConfigTitle}" Foreground="{StaticResource SetupText}" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,14" />
-              <TextBlock Text="Provider id" Foreground="{StaticResource SetupMuted}" FontSize="12" Margin="0,0,0,6" />
-              <TextBox Text="{Binding NewProviderId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="34" Background="#F7F9FD" BorderBrush="{StaticResource SetupSoftLine}" Foreground="{StaticResource SetupText}" Padding="10,0" VerticalContentAlignment="Center" />
-              <TextBlock Text="Base URL" Foreground="{StaticResource SetupMuted}" FontSize="12" Margin="0,12,0,6" />
-              <TextBox Text="{Binding NewProviderBaseUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="34" Background="#F7F9FD" BorderBrush="{StaticResource SetupSoftLine}" Foreground="{StaticResource SetupText}" Padding="10,0" VerticalContentAlignment="Center" />
-              <TextBlock Text="API type" Foreground="{StaticResource SetupMuted}" FontSize="12" Margin="0,12,0,6" />
-              <TextBox Text="{Binding NewProviderApi, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="34" Background="#F7F9FD" BorderBrush="{StaticResource SetupSoftLine}" Foreground="{StaticResource SetupText}" Padding="10,0" VerticalContentAlignment="Center" />
-              <TextBlock Text="API key reference" Foreground="{StaticResource SetupMuted}" FontSize="12" Margin="0,12,0,6" />
-              <TextBox Text="{Binding NewProviderApiKeyRef, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="34" Background="#F7F9FD" BorderBrush="{StaticResource SetupSoftLine}" Foreground="{StaticResource SetupText}" Padding="10,0" VerticalContentAlignment="Center" />
-              <TextBlock Text="Model ids, one per line" Foreground="{StaticResource SetupMuted}" FontSize="12" Margin="0,12,0,6" Visibility="{Binding NewProviderModelsVisibility}" />
-              <TextBox Text="{Binding NewProviderModelIds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="72" Background="#F7F9FD" BorderBrush="{StaticResource SetupSoftLine}" Foreground="{StaticResource SetupText}" Padding="10,8" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Visibility="{Binding NewProviderModelsVisibility}" />
-              <TextBlock Text="{Binding ProviderStatus}" Foreground="{StaticResource SetupMuted}" FontSize="12" TextWrapping="Wrap" Margin="0,12,0,0" Visibility="{Binding ProviderStatusVisibility}" />
-              <Button Style="{StaticResource SetupButton}" Click="SaveSetupProvider_Click" HorizontalAlignment="Right" Width="132" Height="34" Margin="0,18,0,0" AutomationProperties.Name="Save provider"><TextBlock Text="Save provider" Foreground="White" FontSize="12" FontWeight="SemiBold" /></Button>
-            </StackPanel>
-            <TextBlock Grid.Column="2" Text="ipi stores provider references in your local Pi models.json. Prefer environment variables for API keys." Foreground="{StaticResource SetupDim}" FontSize="12" LineHeight="18" TextWrapping="Wrap" Margin="24,32,0,0" />
-          </Grid>
+          <ScrollViewer Grid.Row="2" Visibility="{Binding ProviderConfigVisibility}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" CanContentScroll="False">
+            <Grid Margin="0,0,10,0">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="120" /><ColumnDefinition Width="420" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Button Width="82" Height="30" HorizontalAlignment="Left" VerticalAlignment="Top" Style="{StaticResource GhostSetupButton}" Click="ProviderBack_Click">
+                <StackPanel Orientation="Horizontal"><local:LucideIcon Icon="arrow-left" Size="13" Stroke="{StaticResource SetupMuted}" Margin="0,0,6,0" /><TextBlock Text="Back" Foreground="{StaticResource SetupMuted}" FontSize="12.5" /></StackPanel>
+              </Button>
+              <StackPanel Grid.Column="1">
+                <TextBlock Text="{Binding ProviderConfigTitle}" Foreground="{StaticResource SetupText}" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,14" />
+                <TextBlock x:Name="SetupProviderIdLabel" Text="Provider id" Foreground="{StaticResource SetupMuted}" FontSize="12" Margin="0,0,0,6" />
+                <TextBox Text="{Binding NewProviderId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="34" Background="#F7F9FD" BorderBrush="{StaticResource SetupSoftLine}" Foreground="{StaticResource SetupText}" Padding="10,0" VerticalContentAlignment="Center" AutomationProperties.LabeledBy="{Binding ElementName=SetupProviderIdLabel}" />
+                <TextBlock x:Name="SetupProviderBaseUrlLabel" Text="Base URL" Foreground="{StaticResource SetupMuted}" FontSize="12" Margin="0,12,0,6" />
+                <TextBox x:Name="SetupProviderBaseUrlBox" Text="{Binding NewProviderBaseUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="34" Background="#F7F9FD" BorderBrush="{StaticResource SetupSoftLine}" Foreground="{StaticResource SetupText}" Padding="10,0" VerticalContentAlignment="Center" AutomationProperties.LabeledBy="{Binding ElementName=SetupProviderBaseUrlLabel}" AutomationProperties.HelpText="Remote endpoints require HTTPS. HTTP is allowed only for localhost." />
+                <TextBlock x:Name="SetupProviderApiLabel" Text="API type" Foreground="{StaticResource SetupMuted}" FontSize="12" Margin="0,12,0,6" />
+                <TextBox Text="{Binding NewProviderApi, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="34" Background="#F7F9FD" BorderBrush="{StaticResource SetupSoftLine}" Foreground="{StaticResource SetupText}" Padding="10,0" VerticalContentAlignment="Center" AutomationProperties.LabeledBy="{Binding ElementName=SetupProviderApiLabel}" />
+                <TextBlock x:Name="SetupProviderApiKeyRefLabel" Text="API key environment variable" Foreground="{StaticResource SetupMuted}" FontSize="12" Margin="0,12,0,6" />
+                <TextBox x:Name="SetupProviderApiKeyRefBox" Text="{Binding NewProviderApiKeyRef, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="34" Background="#F7F9FD" BorderBrush="{StaticResource SetupSoftLine}" Foreground="{StaticResource SetupText}" Padding="10,0" VerticalContentAlignment="Center" ToolTip="Environment variable only, for example $OPENAI_API_KEY" AutomationProperties.LabeledBy="{Binding ElementName=SetupProviderApiKeyRefLabel}" AutomationProperties.HelpText="Enter an environment variable reference such as $OPENAI_API_KEY, never a secret value." />
+                <TextBlock x:Name="SetupProviderModelsLabel" Text="Model ids, one per line" Foreground="{StaticResource SetupMuted}" FontSize="12" Margin="0,12,0,6" Visibility="{Binding NewProviderModelsVisibility}" />
+                <TextBox Text="{Binding NewProviderModelIds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="72" Background="#F7F9FD" BorderBrush="{StaticResource SetupSoftLine}" Foreground="{StaticResource SetupText}" Padding="10,8" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Visibility="{Binding NewProviderModelsVisibility}" AutomationProperties.LabeledBy="{Binding ElementName=SetupProviderModelsLabel}" />
+                <TextBlock Text="{Binding ProviderStatus}" Foreground="{StaticResource SetupMuted}" FontSize="12" TextWrapping="Wrap" Margin="0,12,0,0" Visibility="{Binding ProviderStatusVisibility}" AutomationProperties.Name="Provider status" AutomationProperties.LiveSetting="Assertive" />
+                <Button Style="{StaticResource SetupButton}" Click="SaveSetupProvider_Click" HorizontalAlignment="Right" Width="132" Height="34" Margin="0,18,0,0" AutomationProperties.Name="Save provider"><TextBlock Text="Save provider" Foreground="White" FontSize="12" FontWeight="SemiBold" /></Button>
+              </StackPanel>
+              <TextBlock Grid.Column="2" Text="ipi stores only provider references in local Pi models.json. API keys must stay in environment variables." Foreground="{StaticResource SetupDim}" FontSize="12" LineHeight="18" TextWrapping="Wrap" Margin="24,32,0,0" />
+            </Grid>
+          </ScrollViewer>
 
           <Grid Grid.Row="3" Margin="0,22,0,0">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">

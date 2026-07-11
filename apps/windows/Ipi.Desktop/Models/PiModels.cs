@@ -107,6 +107,7 @@ public sealed record PluginResourceRecord(
 public sealed record PluginPackageRecord(
     string Source,
     string Scope,
+    string Status,
     bool Disabled,
     string PackageName,
     string Version,

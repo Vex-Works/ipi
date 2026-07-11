@@ -13,7 +13,7 @@ using Ipi.Desktop.Services;
 
 namespace Ipi.Desktop;
 
-public sealed class SettingsWindowViewModel : INotifyPropertyChanged
+public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposable
 {
     private readonly AppearanceSettingsService _service;
     private readonly ArchiveStoreService _archive;
@@ -21,6 +21,9 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
     private readonly PiAgentBridgeService _bridge = new();
     private readonly PiPackageBridgeService _packageBridge = new();
     private readonly PathSettingsService _pathSettings = new();
+    private readonly object _packageOperationGate = new();
+    private CancellationTokenSource? _packageOperationCancellation;
+    private bool _isDisposed;
     private readonly List<PiModelOptionRecord> _registryModels = new();
     private readonly List<PiProviderCatalogRecord> _providerCatalog = new();
     private readonly List<PiModelOptionRecord> _modelRecords = new();
@@ -162,7 +165,6 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(PackageInstallSourceLabel));
             OnPropertyChanged(nameof(PackageInstallScopeDetail));
             OnPropertyChanged(nameof(PackageGlobalScopeText));
-            OnPropertyChanged(nameof(PackageProjectScopeText));
             OnPropertyChanged(nameof(PackageSourcePlaceholder));
             OnPropertyChanged(nameof(RefreshPackagesText));
             OnPropertyChanged(nameof(SelectedPluginPackageTitle));
@@ -269,8 +271,8 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
 
     public string SkillsTitle => Language == "en-US" ? "Skills" : "技能";
     public string SkillsDescription => Language == "en-US"
-        ? "Enable, disable, and add skill sources. Sources are discovered from the resolved agent, packages, and configured folders."
-        : "启用、禁用和追加 skill 来源。来源会从当前 agent、package 和本机配置目录发现。";
+        ? $"Global skill settings · {_pi.SkillsSettingsPath}. Sources are discovered from the resolved agent, packages, and configured folders."
+        : $"全局技能设置 · {_pi.SkillsSettingsPath}。来源会从当前 agent、package 和本机配置目录发现。";
     public string SkillsSummary => Language == "en-US" ? $"{SkillItems.Count(item => item.IsEnabled)} / {SkillItems.Count} enabled" : $"启用 {SkillItems.Count(item => item.IsEnabled)} / {SkillItems.Count}";
     public string SelectedSkillSourceTitle
     {
@@ -302,18 +304,17 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
     public string SelectedPluginPackageScope => _selectedSettingsPluginPackage?.ScopeText ?? "-";
     public string SelectedPluginPackageUninstallTarget => BuildSelectedPackageUninstallTarget();
     public bool SelectedPluginPackageHasManagedInstall => _selectedSettingsPluginPackage is not null && IsManagedPackageInstallPath(_selectedSettingsPluginPackage.InstalledPath);
-    public bool IsPackageActionRunning { get => _isPackageActionRunning; private set { if (_isPackageActionRunning == value) return; _isPackageActionRunning = value; OnPropertyChanged(); OnPropertyChanged(nameof(PackageActionButtonEnabled)); } }
+    public bool IsPackageActionRunning { get => _isPackageActionRunning; private set { if (_isPackageActionRunning == value) return; _isPackageActionRunning = value; OnPropertyChanged(); OnPropertyChanged(nameof(PackageActionButtonEnabled)); OnPropertyChanged(nameof(SelectedPackageActionButtonEnabled)); } }
     public bool IsPackageAddOpen { get => _isPackageAddOpen; private set { if (_isPackageAddOpen == value) return; _isPackageAddOpen = value; OnPropertyChanged(); OnPropertyChanged(nameof(PackageAddVisibility)); } }
     public string PackageNewSource { get => _packageNewSource; set { if (_packageNewSource == value) return; _packageNewSource = value; OnPropertyChanged(); } }
-    public string PackageInstallScope { get => _packageInstallScope; set { var next = value == "project" ? "project" : "global"; if (_packageInstallScope == next) return; _packageInstallScope = next; OnPropertyChanged(); OnPropertyChanged(nameof(PackageInstallScopeDetail)); } }
-    public string PackageInstallScopeDetail => PackageInstallScope == "project"
-        ? Language == "en-US" ? $"Project scope · {WorkspacePath}" : $"项目范围 · {WorkspacePath}"
-        : Language == "en-US" ? $"Global scope · {_pi.SettingsPath}" : $"全局范围 · {_pi.SettingsPath}";
+    public string PackageInstallScope { get => _packageInstallScope; set { const string next = "global"; if (_packageInstallScope == next) return; _packageInstallScope = next; OnPropertyChanged(); OnPropertyChanged(nameof(PackageInstallScopeDetail)); } }
+    public string PackageInstallScopeDetail => Language == "en-US" ? $"Global scope · {_pi.SettingsPath}" : $"全局范围 · {_pi.SettingsPath}";
     public string PackageGlobalScopeText => Language == "en-US" ? "Global" : "全局";
-    public string PackageProjectScopeText => Language == "en-US" ? "Project" : "项目";
     public string WorkspacePath => LoadWorkspacePath();
     public string PackageActionStatus { get => _packageActionStatus; private set { if (_packageActionStatus == value) return; _packageActionStatus = value; OnPropertyChanged(); OnPropertyChanged(nameof(PackageActionStatusVisibility)); } }
     public bool PackageActionButtonEnabled => !IsPackageActionRunning;
+    public bool SelectedPluginPackageIsReadOnly => _selectedSettingsPluginPackage?.IsReadOnly == true;
+    public bool SelectedPackageActionButtonEnabled => !IsPackageActionRunning && _selectedSettingsPluginPackage is not null && !SelectedPluginPackageIsReadOnly;
     public Visibility PackageAddVisibility => IsPackageAddOpen ? Visibility.Visible : Visibility.Collapsed;
     public Visibility PackageActionStatusVisibility => string.IsNullOrWhiteSpace(PackageActionStatus) ? Visibility.Collapsed : Visibility.Visible;
     public Visibility SelectedPackageNpmActionVisibility => _selectedSettingsPluginPackage?.IsNpmPackage == true ? Visibility.Visible : Visibility.Collapsed;
@@ -634,10 +635,13 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
 
     private async Task RefreshPluginPackagesAsync(string? preferredSource = null)
     {
+        var operation = TryBeginPackageOperation();
+        if (operation is null) return;
         var previousSource = preferredSource ?? _selectedSettingsPluginPackage?.Source;
+        IsPackageActionRunning = true;
         try
         {
-            var packages = await _packageBridge.ListPackagesAsync(WorkspacePath, _pi.AgentDir);
+            var packages = await _packageBridge.ListPackagesAsync(WorkspacePath, _pi.AgentDir, operation.Token);
             SettingsPluginPackages.Clear();
             SettingsPluginResourceGroups.Clear();
             foreach (var package in packages) SettingsPluginPackages.Add(new PluginPackageViewItem(package, Language == "en-US"));
@@ -648,6 +652,10 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(PluginPackagesEmptyVisibility));
             OnPropertyChanged(nameof(PluginPackagesDetailVisibility));
         }
+        catch (OperationCanceledException) when (operation.IsCancellationRequested)
+        {
+            PackageActionStatus = Language == "en-US" ? "Package refresh cancelled" : "插件包刷新已取消";
+        }
         catch (Exception ex)
         {
             PackageActionStatus = ex.Message;
@@ -655,12 +663,17 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
             SettingsPluginResourceGroups.Clear();
             SelectPluginPackage(null);
         }
+        finally
+        {
+            CompletePackageOperation(operation);
+            IsPackageActionRunning = false;
+        }
     }
 
     public void SelectPluginPackage(PluginPackageViewItem? item)
     {
         _selectedSettingsPluginPackage = item;
-        foreach (var package in SettingsPluginPackages) package.IsSelected = item is not null && package.Source.Equals(item.Source, StringComparison.OrdinalIgnoreCase);
+        foreach (var package in SettingsPluginPackages) package.IsSelected = ReferenceEquals(package, item);
         SettingsPluginResourceGroups.Clear();
         if (item is not null)
         {
@@ -689,14 +702,25 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
     public async void TogglePluginPackage(PluginPackageViewItem item)
     {
         if (IsPackageActionRunning) return;
+        if (item.IsReadOnly)
+        {
+            PackageActionStatus = Language == "en-US" ? "Project packages are read-only until workspace trust is implemented." : "在实现工作区信任前，项目 package 仅供查看。";
+            return;
+        }
+        var operation = TryBeginPackageOperation();
+        if (operation is null) return;
         IsPackageActionRunning = true;
         try
         {
             var nextEnabled = item.Disabled;
             PackageActionStatus = nextEnabled ? Language == "en-US" ? "Enabling package..." : "正在启用插件包..." : Language == "en-US" ? "Disabling package..." : "正在禁用插件包...";
-            var packages = await _packageBridge.SetEnabledAsync(WorkspacePath, _pi.AgentDir, item.Source, item.Scope, nextEnabled, progress => PackageActionStatus = progress);
+            var packages = await _packageBridge.SetEnabledAsync(WorkspacePath, _pi.AgentDir, item.Source, item.Scope, nextEnabled, progress => PackageActionStatus = progress, operation.Token);
             RebuildPackageItems(packages, item.Source);
             PackageActionStatus = nextEnabled ? Language == "en-US" ? "Package enabled" : "插件包已启用" : Language == "en-US" ? "Package disabled" : "插件包已禁用";
+        }
+        catch (OperationCanceledException) when (operation.IsCancellationRequested)
+        {
+            PackageActionStatus = Language == "en-US" ? "Package operation cancelled" : "插件包操作已取消";
         }
         catch (Exception ex)
         {
@@ -704,6 +728,7 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
         }
         finally
         {
+            CompletePackageOperation(operation);
             IsPackageActionRunning = false;
         }
     }
@@ -723,20 +748,27 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
 
     public async Task AddPackageAsync()
     {
+        if (IsPackageActionRunning) return;
         var source = PackageNewSource.Trim();
         if (string.IsNullOrWhiteSpace(source) || source.Equals("npm:", StringComparison.OrdinalIgnoreCase))
         {
             PackageActionStatus = Language == "en-US" ? "Enter a package source, for example npm:my-pi-package" : "请输入 package source，例如 npm:my-pi-package";
             return;
         }
+        var operation = TryBeginPackageOperation();
+        if (operation is null) return;
         IsPackageActionRunning = true;
         try
         {
             PackageActionStatus = Language == "en-US" ? $"Installing {source}" : $"正在安装 {source}";
-            var packages = await _packageBridge.InstallAsync(WorkspacePath, _pi.AgentDir, source, PackageInstallScope, progress => PackageActionStatus = progress);
+            var packages = await _packageBridge.InstallAsync(WorkspacePath, _pi.AgentDir, source, "global", progress => PackageActionStatus = progress, operation.Token);
             IsPackageAddOpen = false;
             RebuildPackageItems(packages, source);
             PackageActionStatus = Language == "en-US" ? "Package installed" : "插件包已安装";
+        }
+        catch (OperationCanceledException) when (operation.IsCancellationRequested)
+        {
+            PackageActionStatus = Language == "en-US" ? "Package installation cancelled" : "插件包安装已取消";
         }
         catch (Exception ex)
         {
@@ -744,6 +776,7 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
         }
         finally
         {
+            CompletePackageOperation(operation);
             IsPackageActionRunning = false;
         }
     }
@@ -751,14 +784,25 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
     public async Task UpdateSelectedPackageAsync()
     {
         var selected = _selectedSettingsPluginPackage;
-        if (selected is null) return;
+        if (selected is null || IsPackageActionRunning) return;
+        if (selected.IsReadOnly)
+        {
+            PackageActionStatus = Language == "en-US" ? "Project packages are read-only until workspace trust is implemented." : "在实现工作区信任前，项目 package 仅供查看。";
+            return;
+        }
+        var operation = TryBeginPackageOperation();
+        if (operation is null) return;
         IsPackageActionRunning = true;
         try
         {
             PackageActionStatus = Language == "en-US" ? $"Updating {selected.Source}" : $"正在更新 {selected.Source}";
-            var packages = await _packageBridge.UpdateAsync(WorkspacePath, _pi.AgentDir, selected.Source, selected.Scope, progress => PackageActionStatus = progress);
+            var packages = await _packageBridge.UpdateAsync(WorkspacePath, _pi.AgentDir, selected.Source, selected.Scope, progress => PackageActionStatus = progress, operation.Token);
             RebuildPackageItems(packages, selected.Source);
             PackageActionStatus = Language == "en-US" ? "Package updated" : "插件包已更新";
+        }
+        catch (OperationCanceledException) when (operation.IsCancellationRequested)
+        {
+            PackageActionStatus = Language == "en-US" ? "Package update cancelled" : "插件包更新已取消";
         }
         catch (Exception ex)
         {
@@ -766,6 +810,7 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
         }
         finally
         {
+            CompletePackageOperation(operation);
             IsPackageActionRunning = false;
         }
     }
@@ -774,15 +819,26 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
     {
         var selected = _selectedSettingsPluginPackage;
         if (selected is null || IsPackageActionRunning) return;
+        if (selected.IsReadOnly)
+        {
+            PackageActionStatus = Language == "en-US" ? "Project packages are read-only until workspace trust is implemented." : "在实现工作区信任前，项目 package 仅供查看。";
+            return;
+        }
+        var operation = TryBeginPackageOperation();
+        if (operation is null) return;
         IsPackageActionRunning = true;
         try
         {
             PackageActionStatus = Language == "en-US" ? $"Uninstalling {selected.Source}" : $"正在卸载 {selected.Source}";
-            var packages = await _packageBridge.RemoveAsync(WorkspacePath, _pi.AgentDir, selected.Source, selected.Scope, progress => PackageActionStatus = progress);
+            var packages = await _packageBridge.RemoveAsync(WorkspacePath, _pi.AgentDir, selected.Source, selected.Scope, progress => PackageActionStatus = progress, operation.Token);
             RebuildPackageItems(packages, null);
             PackageActionStatus = selected.Source.StartsWith("file:", StringComparison.OrdinalIgnoreCase) || Directory.Exists(selected.Source)
                 ? Language == "en-US" ? "Local package reference removed. Local source folder was not deleted." : "本地 package 引用已移除；本地源目录未删除。"
                 : Language == "en-US" ? "Package uninstalled and removed from settings." : "插件包已卸载，并已从设置移除。";
+        }
+        catch (OperationCanceledException) when (operation.IsCancellationRequested)
+        {
+            PackageActionStatus = Language == "en-US" ? "Package removal cancelled" : "插件包卸载已取消";
         }
         catch (Exception ex)
         {
@@ -790,8 +846,42 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
         }
         finally
         {
+            CompletePackageOperation(operation);
             IsPackageActionRunning = false;
         }
+    }
+
+    private CancellationTokenSource? TryBeginPackageOperation()
+    {
+        lock (_packageOperationGate)
+        {
+            if (_isDisposed || _packageOperationCancellation is not null) return null;
+            _packageOperationCancellation = new CancellationTokenSource();
+            return _packageOperationCancellation;
+        }
+    }
+
+    private void CompletePackageOperation(CancellationTokenSource operation)
+    {
+        lock (_packageOperationGate)
+        {
+            if (ReferenceEquals(_packageOperationCancellation, operation)) _packageOperationCancellation = null;
+        }
+        operation.Dispose();
+    }
+
+    public void CancelActiveOperations()
+    {
+        CancellationTokenSource? operation;
+        lock (_packageOperationGate) operation = _packageOperationCancellation;
+        try { operation?.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    public void Dispose()
+    {
+        lock (_packageOperationGate) _isDisposed = true;
+        CancelActiveOperations();
     }
 
     private string BuildSelectedPackageUninstallTarget()
@@ -859,7 +949,7 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
         {
             nameof(PluginPackagesSummary), nameof(SelectedPluginPackageTitle), nameof(SelectedPluginPackageSource), nameof(SelectedPluginPackageStatus),
             nameof(SelectedPluginPackageVersion), nameof(SelectedPluginPackageName), nameof(SelectedPluginPackageResources), nameof(SelectedPluginPackagePath),
-            nameof(SelectedPluginPackageScope), nameof(SelectedPluginPackageUninstallTarget), nameof(SelectedPluginPackageHasManagedInstall), nameof(SelectedPackageNpmActionVisibility), nameof(PluginPackagesEmptyVisibility), nameof(PluginPackagesDetailVisibility),
+            nameof(SelectedPluginPackageScope), nameof(SelectedPluginPackageUninstallTarget), nameof(SelectedPluginPackageHasManagedInstall), nameof(SelectedPluginPackageIsReadOnly), nameof(SelectedPackageActionButtonEnabled), nameof(SelectedPackageNpmActionVisibility), nameof(PluginPackagesEmptyVisibility), nameof(PluginPackagesDetailVisibility),
             nameof(PackageActionStatus), nameof(PackageActionStatusVisibility), nameof(PackageAddVisibility), nameof(PackageActionButtonEnabled)
         }) OnPropertyChanged(property);
     }
@@ -1142,6 +1232,8 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
     public void SaveNewProvider()
     {
         var providerId = NewProviderId.Trim();
+        var baseUrl = NewProviderBaseUrl.Trim();
+        var apiKeyReference = string.IsNullOrWhiteSpace(NewProviderApiKeyRef) ? DefaultApiKeyRef(providerId) : NewProviderApiKeyRef.Trim();
         var isBuiltInProvider = _selectedProviderTemplate is { IsCatalogProvider: true };
         var modelIds = NewProviderModelIds
             .Split(new[] { '\r', '\n', ',', ';' }, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
@@ -1153,9 +1245,21 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
             NewProviderStatus = Language == "en-US" ? "Provider id can only use letters, numbers, dot, dash, and underscore." : "Provider ID 只能包含字母、数字、点、短横线和下划线。";
             return;
         }
-        if (string.IsNullOrWhiteSpace(NewProviderBaseUrl) || !Uri.TryCreate(NewProviderBaseUrl.Trim(), UriKind.Absolute, out _))
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var secureEndpoint)
+            || !string.IsNullOrEmpty(secureEndpoint.UserInfo)
+            || !(secureEndpoint.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                 || secureEndpoint.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) && secureEndpoint.IsLoopback))
         {
-            NewProviderStatus = Language == "en-US" ? "Base URL must be a valid absolute URL." : "Base URL 必须是有效的完整 URL。";
+            NewProviderStatus = Language == "en-US"
+                ? "Remote endpoints require HTTPS; HTTP is loopback-only, and embedded URL credentials are not allowed."
+                : "远程地址必须使用 HTTPS；HTTP 仅允许回环地址，且 URL 不得包含凭据。";
+            return;
+        }
+        if (!Regex.IsMatch(apiKeyReference, "^\\$[A-Za-z_][A-Za-z0-9_]*$"))
+        {
+            NewProviderStatus = Language == "en-US"
+                ? "API key must be an environment variable reference such as $OPENAI_API_KEY."
+                : "API key 必须使用环境变量引用，例如 $OPENAI_API_KEY。";
             return;
         }
         if (string.IsNullOrWhiteSpace(NewProviderApi))
@@ -1196,8 +1300,8 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
 
             var provider = new JsonObject
             {
-                ["baseUrl"] = NewProviderBaseUrl.Trim(),
-                ["apiKey"] = string.IsNullOrWhiteSpace(NewProviderApiKeyRef) ? DefaultApiKeyRef(providerId) : NewProviderApiKeyRef.Trim(),
+                ["baseUrl"] = baseUrl,
+                ["apiKey"] = apiKeyReference,
             };
             if (!isBuiltInProvider)
             {
@@ -1342,11 +1446,9 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged
 
     private void RefreshPackageScopeOptions()
     {
-        var selected = PackageInstallScope;
         PackageScopeOptions.Clear();
         PackageScopeOptions.Add(new("global", Language == "en-US" ? "Global" : "全局"));
-        PackageScopeOptions.Add(new("project", Language == "en-US" ? "Project" : "项目"));
-        PackageInstallScope = selected;
+        PackageInstallScope = "global";
     }
 
     private void RebuildFilteredProviderTemplates()

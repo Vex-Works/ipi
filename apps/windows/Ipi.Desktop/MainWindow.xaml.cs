@@ -117,6 +117,7 @@ public partial class MainWindow
             ApplyAppearanceSettings(_settingsViewModel.CurrentSettings);
             ApplySidebarPanelVisualState(false);
             ApplyRightPanelVisualState(false);
+            Dispatcher.BeginInvoke((Action)FocusPromptBox, DispatcherPriority.ApplicationIdle);
         };
     }
 
@@ -337,7 +338,7 @@ public partial class MainWindow
                 SetBrush("FeedbackSoftBg", Color.FromRgb(232, 230, 224));
                 SetBrush("TextPrimary", Color.FromRgb(25, 37, 170));
                 SetBrush("TextMuted", Color.FromRgb(25, 37, 170));
-                SetBrush("TextDim", Color.FromRgb(94, 105, 196));
+                SetBrush("TextDim", Color.FromRgb(75, 85, 170));
                 SetBrush("ChatRailLine", Color.FromArgb(55, 25, 37, 170));
                 SetBrush("ChatScrollThumb", Color.FromRgb(25, 37, 170));
                 SetBrush("Line", Color.FromArgb(55, 25, 37, 170));
@@ -379,7 +380,7 @@ public partial class MainWindow
                 SetBrush("FeedbackSoftBg", Color.FromRgb(22, 22, 22));
                 SetBrush("TextPrimary", Color.FromRgb(255, 252, 246));
                 SetBrush("TextMuted", Color.FromRgb(204, 204, 204));
-                SetBrush("TextDim", Color.FromRgb(140, 140, 140));
+                SetBrush("TextDim", Color.FromRgb(96, 96, 96));
                 SetBrush("ChatRailLine", Color.FromArgb(72, 204, 204, 204));
                 SetBrush("ChatScrollThumb", Color.FromRgb(255, 131, 218));
                 SetBrush("Line", Color.FromRgb(51, 51, 51));
@@ -458,7 +459,7 @@ public partial class MainWindow
             SetBrush("FeedbackSoftBg", Color.FromRgb(238, 241, 247));
             SetBrush("TextPrimary", Color.FromRgb(36, 39, 51));
             SetBrush("TextMuted", Color.FromRgb(98, 106, 122));
-            SetBrush("TextDim", Color.FromRgb(132, 141, 158));
+            SetBrush("TextDim", Color.FromRgb(101, 109, 125));
             SetBrush("ChatRailLine", Color.FromArgb(46, 142, 151, 170));
             SetBrush("ChatScrollThumb", Color.FromRgb(182, 190, 206));
             SetBrush("Line", Color.FromArgb(110, 190, 199, 218));
@@ -497,7 +498,7 @@ public partial class MainWindow
             SetBrush("FeedbackSoftBg", Color.FromRgb(32, 34, 38));
             SetBrush("TextPrimary", Color.FromRgb(243, 244, 246));
             SetBrush("TextMuted", Color.FromRgb(169, 173, 183));
-            SetBrush("TextDim", Color.FromRgb(116, 121, 134));
+            SetBrush("TextDim", Color.FromRgb(138, 145, 158));
             SetBrush("ChatRailLine", Color.FromArgb(72, 116, 121, 134));
             SetBrush("ChatScrollThumb", Color.FromRgb(106, 112, 126));
             SetBrush("Line", Color.FromArgb(96, 63, 68, 77));
@@ -681,14 +682,55 @@ public partial class MainWindow
     {
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         var modifiers = Keyboard.Modifiers;
-        if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && key == Key.G)
+        if (modifiers == ModifierKeys.None && key == Key.F11)
+        {
+            ViewToggleFullScreen_Click(this, new RoutedEventArgs());
+            e.Handled = true;
+        }
+        else if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && key == Key.G)
         {
             ViewModel.ExecuteRightPanelAction("review");
             e.Handled = true;
         }
+        else if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && key == Key.N)
+        {
+            FileNewWindow_Click(this, new RoutedEventArgs());
+            e.Handled = true;
+        }
+        else if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && key == Key.E)
+        {
+            ViewModel.IsExplorerExpanded = !ViewModel.IsExplorerExpanded;
+            e.Handled = true;
+        }
+        else if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && key == Key.OemOpenBrackets)
+        {
+            ViewModel.OpenAdjacentSession(-1);
+            e.Handled = true;
+        }
+        else if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && key == Key.OemCloseBrackets)
+        {
+            ViewModel.OpenAdjacentSession(1);
+            e.Handled = true;
+        }
+        else if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && (key == Key.OemPlus || key == Key.Add))
+        {
+            SetZoom(_zoomScale + 0.1);
+            e.Handled = true;
+        }
+        else if (modifiers == (ModifierKeys.Control | ModifierKeys.Alt) && key == Key.N)
+        {
+            ViewModel.NewConversation();
+            FocusPromptBox();
+            e.Handled = true;
+        }
+        else if (modifiers == (ModifierKeys.Control | ModifierKeys.Alt) && key == Key.B)
+        {
+            ViewModel.ToggleRightPanel();
+            e.Handled = true;
+        }
         else if (modifiers == ModifierKeys.Control && key == Key.T)
         {
-            ViewModel.ExecuteRightPanelAction("browser");
+            OpenSideBrowser(focusAddress: true);
             e.Handled = true;
         }
         else if (modifiers == ModifierKeys.Control && key == Key.P)
@@ -699,6 +741,63 @@ public partial class MainWindow
         else if (modifiers == (ModifierKeys.Control | ModifierKeys.Alt) && key == Key.S)
         {
             ViewModel.ExecuteRightPanelAction("chat");
+            e.Handled = true;
+        }
+        else if (modifiers == ModifierKeys.Control && key == Key.N)
+        {
+            ViewModel.NewConversation();
+            FocusPromptBox();
+            e.Handled = true;
+        }
+        else if (modifiers == ModifierKeys.Control && key == Key.O)
+        {
+            OpenActiveLocation_Click(this, new RoutedEventArgs());
+            e.Handled = true;
+        }
+        else if (modifiers == ModifierKeys.Control && key == Key.B)
+        {
+            ViewModel.ToggleSidebar();
+            e.Handled = true;
+        }
+        else if (modifiers == ModifierKeys.Control && key == Key.J)
+        {
+            ViewModel.ToggleBottomPanel();
+            e.Handled = true;
+        }
+        else if (modifiers == ModifierKeys.Control && key == Key.Oem3)
+        {
+            OpenTerminalForWorkspace();
+            e.Handled = true;
+        }
+        else if (modifiers == ModifierKeys.Control && key == Key.R)
+        {
+            ReloadSideBrowser();
+            e.Handled = true;
+        }
+        else if (modifiers == ModifierKeys.Control && key == Key.F)
+        {
+            ViewModel.SelectNav(new NavItem("search", "Search", "search"));
+            FocusPromptBox();
+            e.Handled = true;
+        }
+        else if (modifiers == ModifierKeys.Control && key == Key.OemOpenBrackets)
+        {
+            ViewModel.ReturnToChat();
+            e.Handled = true;
+        }
+        else if (modifiers == ModifierKeys.Control && key == Key.OemCloseBrackets)
+        {
+            ViewModel.SelectNav(new QuickActionItem("Recent", "recent"));
+            e.Handled = true;
+        }
+        else if (modifiers == ModifierKeys.Control && (key == Key.OemMinus || key == Key.Subtract))
+        {
+            SetZoom(_zoomScale - 0.1);
+            e.Handled = true;
+        }
+        else if (modifiers == ModifierKeys.Control && (key == Key.D0 || key == Key.NumPad0))
+        {
+            SetZoom(1.0);
             e.Handled = true;
         }
     }
@@ -943,11 +1042,34 @@ public partial class MainWindow
 
     private void ViewToggleFileTree_Click(object sender, RoutedEventArgs e) => ViewModel.IsExplorerExpanded = !ViewModel.IsExplorerExpanded;
 
-    private void ViewOpenBrowserTab_Click(object sender, RoutedEventArgs e) => OpenExternalBrowser("about:blank");
+    private void ViewOpenBrowserTab_Click(object sender, RoutedEventArgs e) => OpenSideBrowser(focusAddress: false);
 
-    private void ViewFocusBrowserAddressBar_Click(object sender, RoutedEventArgs e) => OpenExternalBrowser("about:blank");
+    private void ViewFocusBrowserAddressBar_Click(object sender, RoutedEventArgs e) => OpenSideBrowser(focusAddress: true);
 
-    private void ViewReloadBrowserPage_Click(object sender, RoutedEventArgs e) => OpenExternalBrowser(_lastBrowserUrl);
+    private void ViewReloadBrowserPage_Click(object sender, RoutedEventArgs e) => ReloadSideBrowser();
+
+    private void OpenSideBrowser(bool focusAddress)
+    {
+        ViewModel.ExecuteRightPanelAction("browser");
+        if (!focusAddress) return;
+        Dispatcher.BeginInvoke((Action)(() =>
+        {
+            SideBrowserAddressBox.Focus();
+            SideBrowserAddressBox.SelectAll();
+        }), DispatcherPriority.Input);
+    }
+
+    private void ReloadSideBrowser()
+    {
+        ViewModel.ExecuteRightPanelAction("browser");
+        if (SideBrowserWebView.CoreWebView2 is not null)
+        {
+            SideBrowserWebView.CoreWebView2.Reload();
+            ViewModel.StatusText = ViewModel.IsEnglishUi ? "browser reloading" : "正在重新加载浏览器";
+            return;
+        }
+        OpenSideBrowser(focusAddress: true);
+    }
 
     private void ViewToggleSidePanel_Click(object sender, RoutedEventArgs e) => ViewModel.ToggleRightPanel();
 
@@ -2361,6 +2483,13 @@ public partial class MainWindow
         var box = ViewModel.IsChatMode ? ChatPromptBox : MainPromptBox;
         box.Focus();
         Keyboard.Focus(box);
+    }
+
+    private void MainWindow_Closing(object? sender, CancelEventArgs e)
+    {
+        ViewModel.CancelActiveOperations();
+        _settingsViewModel.Dispose();
+        _settingsWindow?.Close();
     }
 
     private static void SendWindowsDictationHotkey()

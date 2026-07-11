@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using Ipi.Desktop.Models;
 
@@ -159,8 +160,29 @@ public sealed class ArchiveStoreService
     private void SaveState(ArchiveFileState state)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_archivePath)!);
-        File.WriteAllText(_archivePath, JsonSerializer.Serialize(state, JsonOptions));
+        WriteTextAtomically(_archivePath, JsonSerializer.Serialize(state, JsonOptions));
         Changed?.Invoke();
+    }
+
+    private static void WriteTextAtomically(string path, string content)
+    {
+        var directory = Path.GetDirectoryName(path) ?? throw new InvalidOperationException($"Path has no parent directory: {path}");
+        var temporaryPath = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+            using (var writer = new StreamWriter(stream, new UTF8Encoding(false)))
+            {
+                writer.Write(content);
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(temporaryPath, path, overwrite: true);
+        }
+        finally
+        {
+            try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); } catch { }
+        }
     }
 
     private static string NormalizePath(string? path)

@@ -11,6 +11,7 @@ import {
   type RunEvent,
 } from "../../core/src/index.js";
 import { parseTuiCommand, helpText } from "./command-router.js";
+import { sanitizeTerminalLine } from "./terminal-sanitize.js";
 import { renderRunEvent } from "./views/timeline.js";
 
 export class IpiTuiApp {
@@ -54,7 +55,7 @@ export class IpiTuiApp {
             this.state.tools = createToolPolicy(command.mode);
             console.log(`tools: ${command.mode} (${this.state.tools.allowedTools.join(", ") || "none"})`);
           }
-          if (command.type === "unknown") console.log(`unknown command: ${command.input}`);
+          if (command.type === "unknown") console.log(`unknown command: ${sanitizeTerminalLine(command.input)}`);
           continue;
         }
         await this.runner.send(line);
@@ -67,7 +68,7 @@ export class IpiTuiApp {
 
   private printHeader(): void {
     console.log("ipi");
-    console.log(`workspace: ${this.state.workspace?.rootPath}`);
+    console.log(`workspace: ${sanitizeTerminalLine(this.state.workspace?.rootPath)}`);
     console.log("type /help for commands, /exit to quit\n");
   }
 
@@ -78,7 +79,7 @@ export class IpiTuiApp {
       return;
     }
     for (const session of sessions.slice(0, 12)) {
-      console.log(`${session.id.slice(0, 8)}  ${session.updatedAt}  ${session.title ?? "Untitled"}`);
+      console.log(`${sanitizeTerminalLine(session.id.slice(0, 8))}  ${sanitizeTerminalLine(session.updatedAt)}  ${sanitizeTerminalLine(session.title ?? "Untitled")}`);
     }
   }
 
@@ -95,7 +96,7 @@ export class IpiTuiApp {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const workspacePath = process.argv[2] ?? process.cwd();
   new IpiTuiApp(workspacePath).start().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(sanitizeTerminalLine(error instanceof Error ? error.message : String(error)));
     process.exitCode = 1;
   });
 }

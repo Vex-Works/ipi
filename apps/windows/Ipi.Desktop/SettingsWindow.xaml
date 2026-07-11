@@ -27,8 +27,8 @@
     <SolidColorBrush x:Key="SettingsSidebarBg" Color="#E8EDF7" />
     <SolidColorBrush x:Key="SettingsCard" Color="#FFFFFF" />
     <SolidColorBrush x:Key="SettingsText" Color="#242733" />
-    <SolidColorBrush x:Key="SettingsMuted" Color="#7A8190" />
-    <SolidColorBrush x:Key="SettingsDim" Color="#9AA2B1" />
+    <SolidColorBrush x:Key="SettingsMuted" Color="#626A7A" />
+    <SolidColorBrush x:Key="SettingsDim" Color="#656D7D" />
     <SolidColorBrush x:Key="SettingsLine" Color="#CCD4E5" />
     <SolidColorBrush x:Key="SettingsWindowBorder" Color="#AEB8CE" />
     <SolidColorBrush x:Key="SettingsControlBg" Color="#E8EDF9" />
@@ -42,14 +42,25 @@
     <SolidColorBrush x:Key="SettingsPreviewBg" Color="#F7F9FE" />
     <SolidColorBrush x:Key="SettingsCaret" Color="#242733" />
     <SolidColorBrush x:Key="SettingsSelection" Color="#B9C8F6" />
+    <local:InverseBooleanConverter x:Key="InverseBoolean" />
+
+    <Style x:Key="SettingsKeyboardFocusStyle" TargetType="Control">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate>
+            <Border BorderBrush="{DynamicResource SettingsText}" BorderThickness="2" CornerRadius="6" Margin="-3" SnapsToDevicePixels="True" />
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
 
     <Style TargetType="{x:Type ScrollViewer}">
-      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="FocusVisualStyle" Value="{StaticResource SettingsKeyboardFocusStyle}" />
       <Setter Property="Focusable" Value="False" />
     </Style>
 
     <Style x:Key="SettingsGhostButton" TargetType="Button">
-      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="FocusVisualStyle" Value="{StaticResource SettingsKeyboardFocusStyle}" />
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderBrush" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
@@ -98,7 +109,7 @@
     </Style>
 
     <Style x:Key="SettingsSidebarButton" TargetType="Button">
-      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="FocusVisualStyle" Value="{StaticResource SettingsKeyboardFocusStyle}" />
       <Setter Property="Height" Value="30" />
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderBrush" Value="Transparent" />
@@ -121,6 +132,42 @@
         </Setter.Value>
       </Setter>
     </Style>
+
+    <Style x:Key="SettingsListRowButton" TargetType="Button" BasedOn="{StaticResource SettingsGhostButton}">
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="VerticalContentAlignment" Value="Stretch" />
+      <Setter Property="BorderThickness" Value="0" />
+    </Style>
+
+    <Style x:Key="SettingsToggleSwitch" TargetType="ToggleButton">
+      <Setter Property="Width" Value="48" />
+      <Setter Property="Height" Value="30" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="FocusVisualStyle" Value="{StaticResource SettingsKeyboardFocusStyle}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ToggleButton">
+            <Border Background="Transparent">
+              <Border x:Name="SwitchTrack" Width="42" Height="24" CornerRadius="12" Background="{DynamicResource SettingsLine}" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Border x:Name="SwitchKnob" Width="18" Height="18" CornerRadius="9" Background="{DynamicResource SettingsBg}" HorizontalAlignment="Left" Margin="3,0,0,0" />
+              </Border>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="SwitchTrack" Property="Background" Value="{DynamicResource SettingsText}" />
+                <Setter TargetName="SwitchKnob" Property="HorizontalAlignment" Value="Right" />
+                <Setter TargetName="SwitchKnob" Property="Margin" Value="0,0,3,0" />
+              </Trigger>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="SwitchTrack" Property="Opacity" Value="0.82" /></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.48" /></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </Window.Resources>
 
   <Border Background="{DynamicResource SettingsBg}" BorderBrush="{DynamicResource SettingsWindowBorder}" BorderThickness="1" SnapsToDevicePixels="True">
@@ -138,7 +185,7 @@
       <Border Grid.ColumnSpan="2" Background="{DynamicResource SettingsBg}" shell:WindowChrome.IsHitTestVisibleInChrome="False" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
         <Grid>
           <TextBlock Text="{Binding WindowTitle}" Foreground="{DynamicResource SettingsDim}" FontSize="12" VerticalAlignment="Center" Margin="18,0,0,0" />
-          <Button HorizontalAlignment="Right" Width="42" Height="42" Style="{StaticResource SettingsGhostButton}" Click="Close_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True" ToolTip="{Binding CloseText}">
+          <Button HorizontalAlignment="Right" Width="42" Height="42" Style="{StaticResource SettingsGhostButton}" Click="Close_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True" ToolTip="{Binding CloseText}" AutomationProperties.Name="{Binding CloseText}">
             <local:LucideIcon Icon="x" Size="16" Stroke="{DynamicResource SettingsMuted}" HorizontalAlignment="Center" />
           </Button>
         </Grid>
@@ -146,7 +193,7 @@
 
       <Border Grid.Row="1" Grid.RowSpan="2" Grid.Column="0" Background="{DynamicResource SettingsSidebarBg}" BorderBrush="{DynamicResource SettingsLine}" BorderThickness="0,0,1,0">
         <StackPanel Margin="12,16,12,18">
-          <Button Click="ModelsSettings_Click">
+          <Button x:Name="ModelsSettingsButton" Click="ModelsSettings_Click" AutomationProperties.Name="{Binding ModelsTitle}">
             <Button.Style>
               <Style TargetType="Button" BasedOn="{StaticResource SettingsSidebarButton}">
                 <Style.Triggers>
@@ -164,7 +211,7 @@
             </StackPanel>
           </Button>
 
-          <Button Click="SkillsSettings_Click" Margin="0,6,0,0">
+          <Button x:Name="SkillsSettingsButton" Click="SkillsSettings_Click" Margin="0,6,0,0" AutomationProperties.Name="{Binding SkillsTitle}">
             <Button.Style>
               <Style TargetType="Button" BasedOn="{StaticResource SettingsSidebarButton}">
                 <Style.Triggers>
@@ -182,7 +229,7 @@
             </StackPanel>
           </Button>
 
-          <Button Click="PackagesSettings_Click" Margin="0,6,0,0">
+          <Button x:Name="PackagesSettingsButton" Click="PackagesSettings_Click" Margin="0,6,0,0" AutomationProperties.Name="{Binding PluginPackagesTitle}">
             <Button.Style>
               <Style TargetType="Button" BasedOn="{StaticResource SettingsSidebarButton}">
                 <Style.Triggers>
@@ -200,7 +247,7 @@
             </StackPanel>
           </Button>
 
-          <Button Click="ArchivedSettings_Click" Margin="0,6,0,0">
+          <Button x:Name="ArchivedSettingsButton" Click="ArchivedSettings_Click" Margin="0,6,0,0" AutomationProperties.Name="{Binding ArchivedConversationsTitle}">
             <Button.Style>
               <Style TargetType="Button" BasedOn="{StaticResource SettingsSidebarButton}">
                 <Style.Triggers>
@@ -218,7 +265,7 @@
             </StackPanel>
           </Button>
 
-          <Button Click="AppearanceSettings_Click" Margin="0,6,0,0">
+          <Button x:Name="AppearanceSettingsButton" Click="AppearanceSettings_Click" Margin="0,6,0,0" AutomationProperties.Name="{Binding AppearanceTitle}">
             <Button.Style>
               <Style TargetType="Button" BasedOn="{StaticResource SettingsSidebarButton}">
                 <Style.Triggers>
@@ -236,7 +283,7 @@
             </StackPanel>
           </Button>
 
-          <Button Click="StorageSettings_Click" Margin="0,6,0,0">
+          <Button x:Name="StorageSettingsButton" Click="StorageSettings_Click" Margin="0,6,0,0" AutomationProperties.Name="{Binding StoragePathsTitle}">
             <Button.Style>
               <Style TargetType="Button" BasedOn="{StaticResource SettingsSidebarButton}">
                 <Style.Triggers>
@@ -254,7 +301,7 @@
             </StackPanel>
           </Button>
 
-          <Button Click="DiagnosticsSettings_Click" Margin="0,6,0,0">
+          <Button x:Name="DiagnosticsSettingsButton" Click="DiagnosticsSettings_Click" Margin="0,6,0,0" AutomationProperties.Name="{Binding RuntimeDiagnosticsTitle}">
             <Button.Style>
               <Style TargetType="Button" BasedOn="{StaticResource SettingsSidebarButton}">
                 <Style.Triggers>
@@ -354,7 +401,7 @@
                 <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="3" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <Button Height="26" Padding="8,0" Background="{Binding Background}" BorderBrush="{Binding BorderBrush}" BorderThickness="1" FocusVisualStyle="{x:Null}" Click="Mode_Click" Cursor="Hand">
+                    <Button Height="26" Padding="8,0" Background="{Binding Background}" BorderBrush="{Binding BorderBrush}" BorderThickness="1" FocusVisualStyle="{StaticResource SettingsKeyboardFocusStyle}" Click="Mode_Click" Cursor="Hand" AutomationProperties.Name="{Binding Label}">
                       <Button.Template>
                         <ControlTemplate TargetType="Button">
                           <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4" Padding="{TemplateBinding Padding}">
@@ -680,7 +727,7 @@
                           <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding ProviderSearchText}" Value=""><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
                         </TextBlock>
                       </StackPanel>
-                      <TextBox Text="{Binding ProviderSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource SettingsText}" CaretBrush="{DynamicResource SettingsCaret}" SelectionBrush="{DynamicResource SettingsSelection}" FontSize="13" VerticalContentAlignment="Center" Margin="25,0,0,0" />
+                      <TextBox Text="{Binding ProviderSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource SettingsText}" CaretBrush="{DynamicResource SettingsCaret}" SelectionBrush="{DynamicResource SettingsSelection}" FontSize="13" VerticalContentAlignment="Center" Margin="25,0,0,0" AutomationProperties.Name="{Binding ProviderSearchPlaceholder}" />
                     </Grid>
                   </Border>
                   <Button Grid.Column="1" Width="76" Height="36" Margin="12,0,0,0" Style="{StaticResource SettingsGhostButton}" Click="CancelAddProvider_Click">
@@ -698,7 +745,7 @@
                             <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="3" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                             <ItemsControl.ItemTemplate>
                               <DataTemplate>
-                                <Button Click="ProviderTemplate_Click" Margin="0,0,12,12" FocusVisualStyle="{x:Null}">
+                                <Button Click="ProviderTemplate_Click" Margin="0,0,12,12" FocusVisualStyle="{StaticResource SettingsKeyboardFocusStyle}" AutomationProperties.Name="{Binding Title}" AutomationProperties.HelpText="{Binding Detail}">
                                   <Button.Style>
                                     <Style TargetType="Button">
                                       <Setter Property="Padding" Value="0" />
@@ -746,31 +793,33 @@
                 </ScrollViewer>
               </Grid>
 
-              <Grid Grid.Row="1" Visibility="{Binding ProviderConfigVisibility}">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="120" /><ColumnDefinition Width="420" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                <Button Width="82" Height="30" HorizontalAlignment="Left" VerticalAlignment="Top" Style="{StaticResource SettingsGhostButton}" Click="CancelAddProvider_Click">
-                  <StackPanel Orientation="Horizontal"><local:LucideIcon Icon="arrow-left" Size="13" Stroke="{DynamicResource SettingsMuted}" Margin="0,0,6,0" /><TextBlock Text="{Binding CancelText}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" /></StackPanel>
-                </Button>
-                <StackPanel Grid.Column="1">
-                  <TextBlock Text="{Binding CustomProviderFormTitle}" Foreground="{DynamicResource SettingsText}" FontSize="14" FontWeight="Medium" Margin="0,0,0,16" />
-                  <TextBlock Text="{Binding NewProviderIdLabel}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" Margin="0,0,0,6" />
-                  <TextBox Text="{Binding NewProviderId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="34" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" Foreground="{DynamicResource SettingsText}" CaretBrush="{DynamicResource SettingsCaret}" SelectionBrush="{DynamicResource SettingsSelection}" Padding="10,0" VerticalContentAlignment="Center" />
-                  <TextBlock Text="{Binding NewProviderBaseUrlLabel}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" Margin="0,12,0,6" />
-                  <TextBox Text="{Binding NewProviderBaseUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="34" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" Foreground="{DynamicResource SettingsText}" CaretBrush="{DynamicResource SettingsCaret}" SelectionBrush="{DynamicResource SettingsSelection}" Padding="10,0" VerticalContentAlignment="Center" />
-                  <TextBlock Text="{Binding NewProviderApiLabel}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" Margin="0,12,0,6" />
-                  <TextBox Text="{Binding NewProviderApi, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="34" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" Foreground="{DynamicResource SettingsText}" CaretBrush="{DynamicResource SettingsCaret}" SelectionBrush="{DynamicResource SettingsSelection}" Padding="10,0" VerticalContentAlignment="Center" />
-                  <TextBlock Text="{Binding NewProviderApiKeyRefLabel}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" Margin="0,12,0,6" />
-                  <TextBox Text="{Binding NewProviderApiKeyRef, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="34" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" Foreground="{DynamicResource SettingsText}" CaretBrush="{DynamicResource SettingsCaret}" SelectionBrush="{DynamicResource SettingsSelection}" Padding="10,0" VerticalContentAlignment="Center" />
-                  <TextBlock Text="{Binding NewProviderModelsLabel}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" Margin="0,12,0,6" Visibility="{Binding NewProviderModelsVisibility}" />
-                  <TextBox Text="{Binding NewProviderModelIds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="78" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" Foreground="{DynamicResource SettingsText}" CaretBrush="{DynamicResource SettingsCaret}" SelectionBrush="{DynamicResource SettingsSelection}" Padding="10,8" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Visibility="{Binding NewProviderModelsVisibility}" />
-                  <TextBlock Text="{Binding NewProviderStatus}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" TextWrapping="Wrap" Margin="0,12,0,0" Visibility="{Binding NewProviderStatusVisibility}" />
-                  <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
-                    <Button Width="142" Height="32" Style="{StaticResource SettingsGhostButton}" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" BorderThickness="1" Click="SaveProvider_Click">
-                      <TextBlock Text="{Binding SaveProviderText}" Foreground="{DynamicResource SettingsText}" FontSize="13" />
-                    </Button>
+              <ScrollViewer Grid.Row="1" Visibility="{Binding ProviderConfigVisibility}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" CanContentScroll="False">
+                <Grid Margin="0,0,10,0">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="120" /><ColumnDefinition Width="420" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                  <Button Width="82" Height="30" HorizontalAlignment="Left" VerticalAlignment="Top" Style="{StaticResource SettingsGhostButton}" Click="CancelAddProvider_Click">
+                    <StackPanel Orientation="Horizontal"><local:LucideIcon Icon="arrow-left" Size="13" Stroke="{DynamicResource SettingsMuted}" Margin="0,0,6,0" /><TextBlock Text="{Binding CancelText}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" /></StackPanel>
+                  </Button>
+                  <StackPanel Grid.Column="1">
+                    <TextBlock Text="{Binding CustomProviderFormTitle}" Foreground="{DynamicResource SettingsText}" FontSize="14" FontWeight="Medium" Margin="0,0,0,16" />
+                    <TextBlock x:Name="SettingsProviderIdLabel" Text="{Binding NewProviderIdLabel}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" Margin="0,0,0,6" />
+                    <TextBox Text="{Binding NewProviderId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="34" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" Foreground="{DynamicResource SettingsText}" CaretBrush="{DynamicResource SettingsCaret}" SelectionBrush="{DynamicResource SettingsSelection}" Padding="10,0" VerticalContentAlignment="Center" AutomationProperties.LabeledBy="{Binding ElementName=SettingsProviderIdLabel}" />
+                    <TextBlock x:Name="SettingsProviderBaseUrlLabel" Text="{Binding NewProviderBaseUrlLabel}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" Margin="0,12,0,6" />
+                    <TextBox x:Name="SettingsProviderBaseUrlBox" Text="{Binding NewProviderBaseUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="34" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" Foreground="{DynamicResource SettingsText}" CaretBrush="{DynamicResource SettingsCaret}" SelectionBrush="{DynamicResource SettingsSelection}" Padding="10,0" VerticalContentAlignment="Center" AutomationProperties.LabeledBy="{Binding ElementName=SettingsProviderBaseUrlLabel}" AutomationProperties.HelpText="Remote endpoints require HTTPS. HTTP is allowed only for localhost." />
+                    <TextBlock x:Name="SettingsProviderApiLabel" Text="{Binding NewProviderApiLabel}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" Margin="0,12,0,6" />
+                    <TextBox Text="{Binding NewProviderApi, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="34" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" Foreground="{DynamicResource SettingsText}" CaretBrush="{DynamicResource SettingsCaret}" SelectionBrush="{DynamicResource SettingsSelection}" Padding="10,0" VerticalContentAlignment="Center" AutomationProperties.LabeledBy="{Binding ElementName=SettingsProviderApiLabel}" />
+                    <TextBlock x:Name="SettingsProviderApiKeyRefLabel" Text="{Binding NewProviderApiKeyRefLabel}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" Margin="0,12,0,6" />
+                    <TextBox x:Name="SettingsProviderApiKeyRefBox" Text="{Binding NewProviderApiKeyRef, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="34" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" Foreground="{DynamicResource SettingsText}" CaretBrush="{DynamicResource SettingsCaret}" SelectionBrush="{DynamicResource SettingsSelection}" Padding="10,0" VerticalContentAlignment="Center" AutomationProperties.LabeledBy="{Binding ElementName=SettingsProviderApiKeyRefLabel}" AutomationProperties.HelpText="Enter an environment variable reference such as $OPENAI_API_KEY, never a secret value." ToolTip="Environment variable only, for example $OPENAI_API_KEY" />
+                    <TextBlock x:Name="SettingsProviderModelsLabel" Text="{Binding NewProviderModelsLabel}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" Margin="0,12,0,6" Visibility="{Binding NewProviderModelsVisibility}" />
+                    <TextBox Text="{Binding NewProviderModelIds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="78" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" Foreground="{DynamicResource SettingsText}" CaretBrush="{DynamicResource SettingsCaret}" SelectionBrush="{DynamicResource SettingsSelection}" Padding="10,8" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Visibility="{Binding NewProviderModelsVisibility}" AutomationProperties.LabeledBy="{Binding ElementName=SettingsProviderModelsLabel}" />
+                    <TextBlock Text="{Binding NewProviderStatus}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" TextWrapping="Wrap" Margin="0,12,0,0" Visibility="{Binding NewProviderStatusVisibility}" AutomationProperties.Name="Provider status" AutomationProperties.LiveSetting="Assertive" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+                      <Button Width="142" Height="32" Style="{StaticResource SettingsGhostButton}" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" BorderThickness="1" Click="SaveProvider_Click">
+                        <TextBlock Text="{Binding SaveProviderText}" Foreground="{DynamicResource SettingsText}" FontSize="13" />
+                      </Button>
+                    </StackPanel>
                   </StackPanel>
-                </StackPanel>
-              </Grid>
+                </Grid>
+              </ScrollViewer>
             </Grid>
           </Border>
         </Grid>
@@ -802,28 +851,24 @@
               <ItemsControl ItemsSource="{Binding SkillSources}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <Border x:Name="SourceRow" Height="78" BorderBrush="{DynamicResource SettingsLine}" BorderThickness="0,0,0,1" Background="Transparent" Padding="14,10" ClipToBounds="True" Cursor="Hand" MouseLeftButtonUp="SkillSourceRow_Click">
+                    <Button x:Name="SourceRow" Height="78" Style="{StaticResource SettingsListRowButton}" Background="Transparent" Click="SkillSourceButton_Click"
+                            AutomationProperties.Name="{Binding Label}" AutomationProperties.HelpText="{Binding Path}" AutomationProperties.ItemStatus="{Binding StateText}">
+                      <Border BorderBrush="{DynamicResource SettingsLine}" BorderThickness="0,0,0,1" Padding="14,10" ClipToBounds="True">
                       <Grid>
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="52" /></Grid.ColumnDefinitions>
                         <StackPanel Grid.Column="0" VerticalAlignment="Center">
                           <TextBlock Text="{Binding Label}" Foreground="{DynamicResource SettingsText}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                           <TextBlock Text="{Binding Path}" Foreground="{DynamicResource SettingsMuted}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,8,8,0" />
                         </StackPanel>
-                        <Button Grid.Column="1" Width="48" Height="30" Padding="0" BorderThickness="0" Background="Transparent" Style="{StaticResource SettingsGhostButton}" HorizontalAlignment="Right" VerticalAlignment="Center" Click="SkillSourceToggle_Click">
-                          <Border x:Name="SourceSwitchBg" Width="42" Height="24" CornerRadius="12" Background="{DynamicResource SettingsLine}">
-                            <Border x:Name="SourceSwitchKnob" Width="18" Height="18" CornerRadius="9" Background="{DynamicResource SettingsBg}" HorizontalAlignment="Left" Margin="3,0,0,0" />
-                          </Border>
-                        </Button>
+                        <ToggleButton Grid.Column="1" Style="{StaticResource SettingsToggleSwitch}" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                      IsChecked="{Binding IsEnabled, Mode=OneWay}" Click="SkillSourceToggle_Click"
+                                      AutomationProperties.Name="{Binding Label}" AutomationProperties.HelpText="{Binding StateText}" />
                       </Grid>
-                    </Border>
+                      </Border>
+                    </Button>
                     <DataTemplate.Triggers>
                       <DataTrigger Binding="{Binding IsSelected}" Value="True">
                         <Setter TargetName="SourceRow" Property="Background" Value="{DynamicResource SettingsSidebarSelectedBg}" />
-                      </DataTrigger>
-                      <DataTrigger Binding="{Binding IsEnabled}" Value="True">
-                        <Setter TargetName="SourceSwitchBg" Property="Background" Value="{DynamicResource SettingsText}" />
-                        <Setter TargetName="SourceSwitchKnob" Property="HorizontalAlignment" Value="Right" />
-                        <Setter TargetName="SourceSwitchKnob" Property="Margin" Value="0,0,3,0" />
                       </DataTrigger>
                     </DataTemplate.Triggers>
                   </DataTemplate>
@@ -852,24 +897,11 @@
                             <TextBlock Text="{Binding StateText}" Foreground="{DynamicResource SettingsMuted}" FontSize="11" Margin="0,4,0,0" />
                             <TextBlock Text="{Binding Detail}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" TextWrapping="Wrap" Height="34" ClipToBounds="True" Margin="0,7,0,0" />
                           </StackPanel>
-                          <Button Grid.Column="1" Width="50" Height="32" Padding="0" BorderThickness="0" Background="Transparent" Style="{StaticResource SettingsGhostButton}" HorizontalAlignment="Right" VerticalAlignment="Center" Click="SkillToggle_Click">
-                            <Border x:Name="SkillSwitchBg" Width="42" Height="24" CornerRadius="12" Background="{DynamicResource SettingsLine}">
-                              <Border x:Name="SkillSwitchKnob" Width="18" Height="18" CornerRadius="9" Background="{DynamicResource SettingsBg}" HorizontalAlignment="Left" Margin="3,0,0,0" />
-                            </Border>
-                          </Button>
+                          <ToggleButton Grid.Column="1" Style="{StaticResource SettingsToggleSwitch}" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                        IsChecked="{Binding IsEnabled, Mode=OneWay}" IsEnabled="{Binding SourceEnabled}" Click="SkillToggle_Click"
+                                        AutomationProperties.Name="{Binding Title}" AutomationProperties.HelpText="{Binding StateText}" />
                         </Grid>
                       </Border>
-                      <DataTemplate.Triggers>
-                        <DataTrigger Binding="{Binding IsEnabled}" Value="True">
-                          <Setter TargetName="SkillSwitchBg" Property="Background" Value="{DynamicResource SettingsText}" />
-                          <Setter TargetName="SkillSwitchKnob" Property="HorizontalAlignment" Value="Right" />
-                          <Setter TargetName="SkillSwitchKnob" Property="Margin" Value="0,0,3,0" />
-                        </DataTrigger>
-                        <DataTrigger Binding="{Binding SourceEnabled}" Value="False">
-                          <Setter TargetName="SkillSwitchBg" Property="Opacity" Value="0.42" />
-                          <Setter TargetName="SkillSwitchKnob" Property="Opacity" Value="0.58" />
-                        </DataTrigger>
-                      </DataTemplate.Triggers>
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
@@ -900,10 +932,10 @@
             <Button Width="82" Height="32" Style="{StaticResource SettingsGhostButton}" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" BorderThickness="1" Click="AddPackageOpen_Click" IsEnabled="{Binding PackageActionButtonEnabled}" Margin="0,0,8,0">
               <TextBlock Text="{Binding PackageAddButtonText}" Foreground="{DynamicResource SettingsText}" FontSize="13" />
             </Button>
-            <Button Width="92" Height="32" Style="{StaticResource SettingsGhostButton}" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" BorderThickness="1" Click="UpdatePackage_Click" IsEnabled="{Binding PackageActionButtonEnabled}" Margin="0,0,8,0">
+            <Button Width="92" Height="32" Style="{StaticResource SettingsGhostButton}" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" BorderThickness="1" Click="UpdatePackage_Click" IsEnabled="{Binding SelectedPackageActionButtonEnabled}" Margin="0,0,8,0">
               <TextBlock Text="{Binding PackageUpdateButtonText}" Foreground="{DynamicResource SettingsText}" FontSize="13" />
             </Button>
-            <Button Width="108" Height="32" Style="{StaticResource SettingsGhostButton}" Background="#18FF4D4D" BorderBrush="#33FF4D4D" BorderThickness="1" Click="RemovePackage_Click" IsEnabled="{Binding PackageActionButtonEnabled}" Margin="0,0,8,0">
+            <Button Width="108" Height="32" Style="{StaticResource SettingsGhostButton}" Background="#18FF4D4D" BorderBrush="#33FF4D4D" BorderThickness="1" Click="RemovePackage_Click" IsEnabled="{Binding SelectedPackageActionButtonEnabled}" Margin="0,0,8,0">
               <TextBlock Text="{Binding PackageRemoveButtonText}" Foreground="#D94A45" FontSize="13" />
             </Button>
             <Button Width="92" Height="32" Style="{StaticResource SettingsGhostButton}" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" BorderThickness="1" Click="RefreshPackages_Click" IsEnabled="{Binding PackageActionButtonEnabled}">
@@ -914,40 +946,10 @@
         <Border Grid.Row="1" Background="{DynamicResource SettingsCard}" BorderBrush="{DynamicResource SettingsLine}" BorderThickness="1" CornerRadius="9" Padding="14,12" Margin="0,0,0,14" Visibility="{Binding PackageAddVisibility}">
           <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="130" /><ColumnDefinition Width="*" /><ColumnDefinition Width="138" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-            <TextBlock Text="{Binding PackageInstallSourceLabel}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" VerticalAlignment="Center" />
-            <TextBox Grid.Column="1" Text="{Binding PackageNewSource, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="32" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" Foreground="{DynamicResource SettingsText}" CaretBrush="{DynamicResource SettingsCaret}" SelectionBrush="{DynamicResource SettingsSelection}" Padding="10,0" VerticalContentAlignment="Center" FontFamily="{DynamicResource IpiCodeFontFamily}" ToolTip="{Binding PackageSourcePlaceholder}" />
+            <TextBlock x:Name="PackageInstallSourceLabel" Text="{Binding PackageInstallSourceLabel}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" VerticalAlignment="Center" />
+            <TextBox Grid.Column="1" Text="{Binding PackageNewSource, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Height="32" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" Foreground="{DynamicResource SettingsText}" CaretBrush="{DynamicResource SettingsCaret}" SelectionBrush="{DynamicResource SettingsSelection}" Padding="10,0" VerticalContentAlignment="Center" FontFamily="{DynamicResource IpiCodeFontFamily}" ToolTip="{Binding PackageSourcePlaceholder}" AutomationProperties.LabeledBy="{Binding ElementName=PackageInstallSourceLabel}" />
             <Border Grid.Column="2" Height="32" Margin="10,0,0,0" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" BorderThickness="1" CornerRadius="7" Padding="3" ToolTip="{Binding PackageInstallScopeDetail}">
-              <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                <Button Grid.Column="0" Height="24" Click="PackageScopeGlobal_Click">
-                  <Button.Style>
-                    <Style TargetType="Button" BasedOn="{StaticResource SettingsGhostButton}">
-                      <Setter Property="Background" Value="Transparent" />
-                      <Setter Property="BorderThickness" Value="0" />
-                      <Style.Triggers>
-                        <DataTrigger Binding="{Binding PackageInstallScope}" Value="global">
-                          <Setter Property="Background" Value="{DynamicResource SettingsSidebarSelectedBg}" />
-                        </DataTrigger>
-                      </Style.Triggers>
-                    </Style>
-                  </Button.Style>
-                  <TextBlock Text="{Binding PackageGlobalScopeText}" Foreground="{DynamicResource SettingsText}" FontSize="12" HorizontalAlignment="Center" />
-                </Button>
-                <Button Grid.Column="1" Height="24" Click="PackageScopeProject_Click">
-                  <Button.Style>
-                    <Style TargetType="Button" BasedOn="{StaticResource SettingsGhostButton}">
-                      <Setter Property="Background" Value="Transparent" />
-                      <Setter Property="BorderThickness" Value="0" />
-                      <Style.Triggers>
-                        <DataTrigger Binding="{Binding PackageInstallScope}" Value="project">
-                          <Setter Property="Background" Value="{DynamicResource SettingsSidebarSelectedBg}" />
-                        </DataTrigger>
-                      </Style.Triggers>
-                    </Style>
-                  </Button.Style>
-                  <TextBlock Text="{Binding PackageProjectScopeText}" Foreground="{DynamicResource SettingsText}" FontSize="12" HorizontalAlignment="Center" />
-                </Button>
-              </Grid>
+              <TextBlock Text="{Binding PackageGlobalScopeText}" Foreground="{DynamicResource SettingsText}" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" />
             </Border>
             <Button Grid.Column="3" Width="76" Height="32" Style="{StaticResource SettingsGhostButton}" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" BorderThickness="1" Click="AddPackageConfirm_Click" IsEnabled="{Binding PackageActionButtonEnabled}" Margin="10,0,0,0">
               <TextBlock Text="{Binding PackageAddButtonText}" Foreground="{DynamicResource SettingsText}" FontSize="13" />
@@ -957,7 +959,7 @@
             </Button>
           </Grid>
         </Border>
-        <TextBlock Grid.Row="1" Text="{Binding PackageActionStatus}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" Margin="0,-10,0,12" VerticalAlignment="Bottom" Visibility="{Binding PackageActionStatusVisibility}" />
+        <TextBlock Grid.Row="1" Text="{Binding PackageActionStatus}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" Margin="0,-10,0,12" VerticalAlignment="Bottom" Visibility="{Binding PackageActionStatusVisibility}" AutomationProperties.Name="Package status" AutomationProperties.LiveSetting="Polite" />
         <Grid Grid.Row="2">
           <Grid.ColumnDefinitions><ColumnDefinition Width="320" /><ColumnDefinition Width="18" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
           <Border Grid.Column="0" Background="{DynamicResource SettingsCard}" BorderBrush="{DynamicResource SettingsLine}" BorderThickness="1" CornerRadius="9" ClipToBounds="True">
@@ -967,7 +969,9 @@
                 <ItemsControl ItemsSource="{Binding SettingsPluginPackages}">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                      <Border x:Name="PackageRow" Height="84" BorderBrush="{DynamicResource SettingsLine}" BorderThickness="0,0,0,1" Background="Transparent" Padding="14,10" ClipToBounds="True" Cursor="Hand" MouseLeftButtonUp="SettingsPluginPackageRow_Click">
+                      <Button x:Name="PackageRow" Height="84" Style="{StaticResource SettingsListRowButton}" Background="Transparent" Click="SettingsPluginPackageButton_Click"
+                              AutomationProperties.Name="{Binding Title}" AutomationProperties.HelpText="{Binding Source}" AutomationProperties.ItemStatus="{Binding StatusText}">
+                        <Border BorderBrush="{DynamicResource SettingsLine}" BorderThickness="0,0,0,1" Padding="14,10" ClipToBounds="True">
                         <Grid>
                           <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="52" /></Grid.ColumnDefinitions>
                           <StackPanel Grid.Column="0" VerticalAlignment="Center">
@@ -975,21 +979,25 @@
                             <TextBlock Text="{Binding Source}" Foreground="{DynamicResource SettingsMuted}" FontSize="11" FontFamily="{DynamicResource IpiCodeFontFamily}" TextTrimming="CharacterEllipsis" Margin="0,6,8,0" />
                             <TextBlock Text="{Binding Detail}" Foreground="{DynamicResource SettingsMuted}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,4,8,0" />
                           </StackPanel>
-                          <Button Grid.Column="1" Width="48" Height="30" Padding="0" BorderThickness="0" Background="Transparent" Style="{StaticResource SettingsGhostButton}" HorizontalAlignment="Right" VerticalAlignment="Center" Click="SettingsPluginPackageToggle_Click">
-                            <Border x:Name="PackageSwitchBg" Width="42" Height="24" CornerRadius="12" Background="{DynamicResource SettingsLine}">
-                              <Border x:Name="PackageSwitchKnob" Width="18" Height="18" CornerRadius="9" Background="{DynamicResource SettingsBg}" HorizontalAlignment="Left" Margin="3,0,0,0" />
-                            </Border>
-                          </Button>
+                          <ToggleButton Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                        IsChecked="{Binding Disabled, Converter={StaticResource InverseBoolean}, Mode=OneWay}" Click="SettingsPluginPackageToggle_Click"
+                                        AutomationProperties.Name="{Binding Title}" AutomationProperties.HelpText="{Binding StatusText}">
+                            <ToggleButton.Style>
+                              <Style TargetType="ToggleButton" BasedOn="{StaticResource SettingsToggleSwitch}">
+                                <Style.Triggers>
+                                  <DataTrigger Binding="{Binding Scope}" Value="project">
+                                    <Setter Property="IsEnabled" Value="False" />
+                                  </DataTrigger>
+                                </Style.Triggers>
+                              </Style>
+                            </ToggleButton.Style>
+                          </ToggleButton>
                         </Grid>
-                      </Border>
+                        </Border>
+                      </Button>
                       <DataTemplate.Triggers>
                         <DataTrigger Binding="{Binding IsSelected}" Value="True">
                           <Setter TargetName="PackageRow" Property="Background" Value="{DynamicResource SettingsSidebarSelectedBg}" />
-                        </DataTrigger>
-                        <DataTrigger Binding="{Binding Disabled}" Value="False">
-                          <Setter TargetName="PackageSwitchBg" Property="Background" Value="{DynamicResource SettingsText}" />
-                          <Setter TargetName="PackageSwitchKnob" Property="HorizontalAlignment" Value="Right" />
-                          <Setter TargetName="PackageSwitchKnob" Property="Margin" Value="0,0,3,0" />
                         </DataTrigger>
                       </DataTemplate.Triggers>
                     </DataTemplate>
@@ -1082,7 +1090,7 @@
               <TextBlock Text="{Binding StorageRestartNotice}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" TextWrapping="Wrap" />
             </Border>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-              <TextBlock Text="{Binding StorageStatus}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" VerticalAlignment="Center" Margin="0,0,14,0" Visibility="{Binding StorageStatusVisibility}" />
+              <TextBlock Text="{Binding StorageStatus}" Foreground="{DynamicResource SettingsMuted}" FontSize="12" VerticalAlignment="Center" Margin="0,0,14,0" Visibility="{Binding StorageStatusVisibility}" AutomationProperties.Name="Storage status" AutomationProperties.LiveSetting="Polite" />
               <Button Width="112" Height="34" Style="{StaticResource SettingsGhostButton}" Background="{DynamicResource SettingsControlBg}" BorderBrush="{DynamicResource SettingsControlBorder}" BorderThickness="1" Click="SaveStoragePaths_Click"><TextBlock Text="{Binding SaveStoragePathsText}" Foreground="{DynamicResource SettingsText}" FontSize="13" /></Button>
             </StackPanel>
           </StackPanel>

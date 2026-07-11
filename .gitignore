@@ -4,6 +4,8 @@ node_modules/
 # .NET / WPF build outputs
 bin/
 obj/
+.dotnet-home/
+.nuget-packages/
 
 # Release artifacts generated locally
 /dist/

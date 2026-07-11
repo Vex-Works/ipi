@@ -32,6 +32,14 @@ public partial class SetupPreviewWindow
         Left = area.Left + Math.Max(0, (area.Width - ActualWidth) / 2);
         Top = area.Top + Math.Max(0, (area.Height - ActualHeight) / 2);
         Activate();
+        if (_viewModel.Screen == "welcome")
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                InstallPathBox.Focus();
+                Keyboard.Focus(InstallPathBox);
+            }, System.Windows.Threading.DispatcherPriority.Input);
+        }
     }
 
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -48,11 +56,55 @@ public partial class SetupPreviewWindow
 
     private void MaximizeRestore_Click(object sender, RoutedEventArgs e) => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
 
-    private void Close_Click(object sender, RoutedEventArgs e) => Close();
+    private void Close_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel.IsOperationRunning)
+        {
+            _viewModel.CancelCurrentOperation();
+            return;
+        }
+        Close();
+    }
+
+    private void SetupPreviewWindow_Closing(object? sender, CancelEventArgs e)
+    {
+        if (!_viewModel.IsOperationRunning) return;
+        e.Cancel = true;
+        _viewModel.CancelCurrentOperation();
+    }
 
     private async void ShowProgress_Click(object sender, RoutedEventArgs e)
     {
+        if (!ConfirmNonEmptyInstallTarget()) return;
         await _viewModel.StartSetupAsync();
+    }
+
+    private async void RetryInstall_Click(object sender, RoutedEventArgs e)
+    {
+        if (!ConfirmNonEmptyInstallTarget()) return;
+        await _viewModel.StartSetupAsync();
+    }
+
+    private bool ConfirmNonEmptyInstallTarget()
+    {
+        try
+        {
+            if (!_viewModel.InstallTargetHasContent(out var target)) return true;
+            return MessageBox.Show(
+                       this,
+                       $"The selected folder is not empty:\n{target}\n\nExisting files with the same names may be replaced. Continue only if this folder is intended for ipi.",
+                       "Confirm install location",
+                       MessageBoxButton.YesNo,
+                       MessageBoxImage.Warning,
+                       MessageBoxResult.No) == MessageBoxResult.Yes;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Invalid install location", MessageBoxButton.OK, MessageBoxImage.Warning);
+            InstallPathBox.Focus();
+            InstallPathBox.SelectAll();
+            return false;
+        }
     }
 
     private async void InstallRuntime_Click(object sender, RoutedEventArgs e) => await _viewModel.InstallRuntimeAsync();
@@ -63,16 +115,28 @@ public partial class SetupPreviewWindow
 
     private void Continue_Click(object sender, RoutedEventArgs e)
     {
-        if (_viewModel.IsRuntimeReady) _viewModel.ShowProviderSetup();
+        if (_viewModel.IsRuntimeReady)
+        {
+            _viewModel.ShowProviderSetup();
+            FocusProviderContent();
+        }
     }
 
     private void StartIpi_Click(object sender, RoutedEventArgs e) => OpenMainWindow();
 
     private void SkipProvider_Click(object sender, RoutedEventArgs e) => OpenMainWindow();
 
-    private void AddAnotherProvider_Click(object sender, RoutedEventArgs e) => _viewModel.ShowProviderGallery();
+    private void AddAnotherProvider_Click(object sender, RoutedEventArgs e)
+    {
+        _viewModel.ShowProviderGallery();
+        FocusProviderContent();
+    }
 
-    private void ProviderBack_Click(object sender, RoutedEventArgs e) => _viewModel.ShowProviderGallery();
+    private void ProviderBack_Click(object sender, RoutedEventArgs e)
+    {
+        _viewModel.ShowProviderGallery();
+        FocusProviderContent();
+    }
 
     private void OpenSetupLogs_Click(object sender, RoutedEventArgs e)
     {
@@ -92,7 +156,23 @@ public partial class SetupPreviewWindow
 
     private void ProviderOption_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: SetupProviderOptionItem item }) _viewModel.SelectProviderOption(item);
+        if (sender is FrameworkElement { DataContext: SetupProviderOptionItem item })
+        {
+            _viewModel.SelectProviderOption(item);
+            FocusProviderContent();
+        }
+    }
+
+    private void FocusProviderContent()
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            var target = _viewModel.ProviderConfigVisibility == Visibility.Visible
+                ? (IInputElement)SetupProviderBaseUrlBox
+                : SetupProviderSearchBox;
+            target.Focus();
+            Keyboard.Focus(target);
+        }, System.Windows.Threading.DispatcherPriority.Input);
     }
 
     private void SaveSetupProvider_Click(object sender, RoutedEventArgs e) => _viewModel.SaveSelectedProvider();
@@ -170,6 +250,8 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
     private string _bootstrapError = "";
     private readonly List<string> _setupLogLines = new();
     private bool _isInstallingRuntime;
+    private CancellationTokenSource? _operationCancellation;
+    private bool _isOperationRunning;
     private bool _continueSetupInInstalledCopy;
     private string _connectedProviderId = "";
     private string _connectedProviderTitle = "No provider connected";
@@ -243,6 +325,18 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
         }
     }
     public ObservableCollection<SetupStepItem> Steps { get; }
+    public bool IsOperationRunning
+    {
+        get => _isOperationRunning;
+        private set
+        {
+            if (_isOperationRunning == value) return;
+            _isOperationRunning = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ApplicationInstallRetryVisibility));
+            OnPropertyChanged(nameof(CloseButtonText));
+        }
+    }
     private bool IsAwaitingRuntimeInstall => IsInstallScreen && !_isInstallingRuntime && !IsRuntimeReady && string.IsNullOrWhiteSpace(_installError) && string.IsNullOrWhiteSpace(_bootstrapError) && _setupLogLines.Count == 0;
     public string CurrentStep => IsAwaitingRuntimeInstall ? "Ready to install runtime" : Steps.FirstOrDefault(step => step.State == "active")?.Label ?? "Runtime ready";
     public string StepCounter
@@ -266,12 +360,13 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
     public bool IsRuntimeReady => Steps.Count > 0 && Steps.All(step => step.State == "done");
     public Visibility ContinueButtonVisibility => IsRuntimeReady ? Visibility.Visible : Visibility.Collapsed;
     public Visibility InstallRuntimeButtonVisibility => Visibility.Collapsed;
+    public Visibility ApplicationInstallRetryVisibility => !IsOperationRunning && !string.IsNullOrWhiteSpace(_installError) ? Visibility.Visible : Visibility.Collapsed;
     public Visibility RuntimeInstallConfirmationVisibility => IsAwaitingRuntimeInstall ? Visibility.Visible : Visibility.Collapsed;
     public Visibility RuntimeChecklistVisibility => IsAwaitingRuntimeInstall ? Visibility.Collapsed : Visibility.Visible;
     public string RuntimeInstallSource => RuntimeBootstrapService.PiPackageSpec;
     public string RuntimeInstallTarget => ShortPath(_bootstrapInspection.PiCodingAgentRoot);
     public string RuntimeInstallAgentDir => ShortPath(_bootstrapInspection.AgentDir);
-    public string CloseButtonText => IsRuntimeReady ? "Close" : "Cancel";
+    public string CloseButtonText => IsOperationRunning ? "Cancel" : IsRuntimeReady ? "Close" : "Cancel";
     public string InstalledExePath => string.IsNullOrWhiteSpace(_installedExePath) ? Path.Combine(NormalizeDirectoryPath(InstallPath), "ipi.exe") : _installedExePath;
     public bool ContinueSetupInInstalledCopy => _continueSetupInInstalledCopy;
 
@@ -309,29 +404,70 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
 
     public string LiveOutput => string.Join('\n', BuildLiveOutputLines());
 
+    public void CancelCurrentOperation()
+    {
+        if (_operationCancellation is null || _operationCancellation.IsCancellationRequested) return;
+        _setupLogLines.Add("Cancellation requested. Finishing the current file operation safely…");
+        _operationCancellation.Cancel();
+        RefreshSetupPlan();
+    }
+
     public async Task StartSetupAsync()
     {
+        if (IsOperationRunning) return;
+        using var cancellation = new CancellationTokenSource();
+        _operationCancellation = cancellation;
+        IsOperationRunning = true;
         Screen = "progress";
         ShowDetails = false;
         _installError = "";
         _bootstrapError = "";
         _continueSetupInInstalledCopy = false;
         RefreshSetupPlan();
-        await Task.Yield();
-        await InstallApplicationFilesAsync();
-        RefreshSetupPlan();
+        try
+        {
+            await Task.Yield();
+            await InstallApplicationFilesAsync(cancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            _installError = "Application file copy was canceled. You can retry when ready.";
+        }
+        finally
+        {
+            if (ReferenceEquals(_operationCancellation, cancellation)) _operationCancellation = null;
+            IsOperationRunning = false;
+            RefreshSetupPlan();
+        }
     }
 
     public async Task InstallRuntimeAsync()
     {
+        if (IsOperationRunning) return;
+        using var cancellation = new CancellationTokenSource();
+        _operationCancellation = cancellation;
+        IsOperationRunning = true;
         Screen = "progress";
         _bootstrapError = "";
         _setupLogLines.Clear();
         _isInstallingRuntime = true;
         RefreshSetupPlan();
-        await BootstrapRuntimeAsync();
-        _isInstallingRuntime = false;
-        RefreshSetupPlan();
+        try
+        {
+            await BootstrapRuntimeAsync(cancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            _bootstrapError = "Runtime setup was canceled. No secret or provider data was changed.";
+            _setupLogLines.Add("CANCELED: runtime setup was canceled by the user.");
+        }
+        finally
+        {
+            _isInstallingRuntime = false;
+            if (ReferenceEquals(_operationCancellation, cancellation)) _operationCancellation = null;
+            IsOperationRunning = false;
+            RefreshSetupPlan();
+        }
         if (!IsRuntimeReady && !string.IsNullOrWhiteSpace(_bootstrapError)) Screen = "failed";
     }
 
@@ -383,6 +519,7 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
     {
         var providerId = NewProviderId.Trim();
         var isCatalogProvider = _selectedProviderOption is { IsCatalogProvider: true };
+        var apiKeyReference = string.IsNullOrWhiteSpace(NewProviderApiKeyRef) ? DefaultApiKeyRef(providerId) : NewProviderApiKeyRef.Trim();
         var modelIds = NewProviderModelIds
             .Split(new[] { '\r', '\n', ',', ';' }, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -393,9 +530,9 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
             ProviderStatus = "Provider id can only use letters, numbers, dot, dash, and underscore.";
             return;
         }
-        if (string.IsNullOrWhiteSpace(NewProviderBaseUrl) || !Uri.TryCreate(NewProviderBaseUrl.Trim(), UriKind.Absolute, out _))
+        if (!TryValidateProviderEndpoint(NewProviderBaseUrl, out _))
         {
-            ProviderStatus = "Base URL must be a valid absolute URL.";
+            ProviderStatus = "Remote Base URLs must use HTTPS. HTTP is loopback-only, and credentials must not be embedded in the URL.";
             return;
         }
         if (string.IsNullOrWhiteSpace(NewProviderApi))
@@ -406,6 +543,12 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
         if (!isCatalogProvider && modelIds.Count == 0)
         {
             ProviderStatus = "Add at least one model id.";
+            return;
+        }
+        if (!Regex.IsMatch(apiKeyReference, "^\\$[A-Za-z_][A-Za-z0-9_]*$"))
+        {
+            NewProviderApiKeyRef = "";
+            ProviderStatus = "Use an environment variable reference such as $OPENAI_API_KEY. Secret values are not stored in models.json.";
             return;
         }
 
@@ -428,7 +571,7 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
             var provider = new JsonObject
             {
                 ["baseUrl"] = NewProviderBaseUrl.Trim(),
-                ["apiKey"] = string.IsNullOrWhiteSpace(NewProviderApiKeyRef) ? DefaultApiKeyRef(providerId) : NewProviderApiKeyRef.Trim(),
+                ["apiKey"] = apiKeyReference,
             };
             if (!isCatalogProvider)
             {
@@ -485,6 +628,7 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(IsRuntimeReady));
         OnPropertyChanged(nameof(ContinueButtonVisibility));
         OnPropertyChanged(nameof(InstallRuntimeButtonVisibility));
+        OnPropertyChanged(nameof(ApplicationInstallRetryVisibility));
         OnPropertyChanged(nameof(RuntimeInstallConfirmationVisibility));
         OnPropertyChanged(nameof(RuntimeChecklistVisibility));
         OnPropertyChanged(nameof(RuntimeInstallSource));
@@ -529,7 +673,7 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
         return checks;
     }
 
-    private async Task BootstrapRuntimeAsync()
+    private async Task BootstrapRuntimeAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -539,13 +683,17 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
                 if (!string.IsNullOrWhiteSpace(message)) _setupLogLines.Add(message);
                 RefreshSetupPlan();
             });
-            await _bootstrap.BootstrapAsync(progress);
+            await _bootstrap.BootstrapAsync(progress, cancellationToken);
             _pi = new PiDataService();
             _runtimeInfo = _pi.RuntimeInfo;
             _bootstrapInspection = _bootstrap.Inspect();
             _bootstrapError = "";
             _ = LoadProviderCatalogAsync();
             _ = LoadRegistryModelsAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -554,7 +702,7 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
         }
     }
 
-    private async Task InstallApplicationFilesAsync()
+    private async Task InstallApplicationFilesAsync(CancellationToken cancellationToken)
     {
         var sourceRoot = NormalizeDirectoryPath(AppContext.BaseDirectory);
         var targetRoot = NormalizeDirectoryPath(InstallPath);
@@ -567,14 +715,27 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
             if (IsSubDirectoryOf(targetRoot, sourceRoot)) throw new InvalidOperationException("Choose a folder outside the current publish directory.");
             if (IsSubDirectoryOf(sourceRoot, targetRoot)) throw new InvalidOperationException("Choose a folder that does not contain the current publish directory.");
 
-            await Task.Run(() => CopyDirectory(sourceRoot, targetRoot));
+            await Task.Run(() => CopyDirectory(sourceRoot, targetRoot, cancellationToken), cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             WriteInstallMarker(targetRoot, sourceRoot);
             _continueSetupInInstalledCopy = File.Exists(_installedExePath) && !IsSameDirectory(sourceRoot, targetRoot);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
             _installError = ex.Message;
         }
+    }
+
+    public bool InstallTargetHasContent(out string targetPath)
+    {
+        targetPath = NormalizeDirectoryPath(InstallPath);
+        var sourceRoot = NormalizeDirectoryPath(AppContext.BaseDirectory);
+        if (IsSameDirectory(sourceRoot, targetPath) || !Directory.Exists(targetPath)) return false;
+        return Directory.EnumerateFileSystemEntries(targetPath).Any();
     }
 
     public bool TryGetInstalledExecutable(out string executablePath)
@@ -583,11 +744,13 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
         return File.Exists(executablePath);
     }
 
-    private static void CopyDirectory(string sourceRoot, string targetRoot)
+    private static void CopyDirectory(string sourceRoot, string targetRoot, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         Directory.CreateDirectory(targetRoot);
         foreach (var directory in Directory.EnumerateDirectories(sourceRoot, "*", SearchOption.AllDirectories))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var relative = Path.GetRelativePath(sourceRoot, directory);
             if (ShouldSkipInstallRelativePath(relative)) continue;
             Directory.CreateDirectory(Path.Combine(targetRoot, relative));
@@ -595,6 +758,7 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
 
         foreach (var file in Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var relative = Path.GetRelativePath(sourceRoot, file);
             if (ShouldSkipInstallRelativePath(relative)) continue;
             var destination = Path.Combine(targetRoot, relative);
@@ -969,6 +1133,21 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
     {
         var normalized = Regex.Replace(provider.ToUpperInvariant(), "[^A-Z0-9]+", "_").Trim('_');
         return string.IsNullOrWhiteSpace(normalized) ? "$API_KEY" : $"${normalized}_API_KEY";
+    }
+
+    private static bool TryValidateProviderEndpoint(string value, out Uri? endpoint)
+    {
+        endpoint = null;
+        if (!Uri.TryCreate(value.Trim(), UriKind.Absolute, out var parsed)) return false;
+        if (string.IsNullOrEmpty(parsed.UserInfo) &&
+            (parsed.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+            parsed.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) && parsed.IsLoopback)
+           )
+        {
+            endpoint = parsed;
+            return true;
+        }
+        return false;
     }
 
     private static string? FindExecutableOnPath(string fileName)

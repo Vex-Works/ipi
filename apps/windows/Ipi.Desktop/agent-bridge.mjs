@@ -1,8 +1,10 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { pathToFileURL } from 'node:url';
+
+import { ApprovalRouter } from './approval-router.mjs';
+import { buildToolApprovalScope, decideToolPolicy } from './bridge-policy.mjs';
 
 function emit(payload) {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
@@ -16,50 +18,21 @@ async function readInput() {
   return JSON.parse(first.value || '{}');
 }
 
-function ipiAppDataDir() {
-  return process.env.IPI_APPDATA_DIR || path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'ipi');
-}
-
-function ipiLocalAppDataDir() {
-  return process.env.IPI_LOCALAPPDATA_DIR || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'ipi');
-}
-
-function readRuntimeConfig() {
-  try {
-    const configPath = path.join(ipiAppDataDir(), 'runtime.json');
-    if (!fs.existsSync(configPath)) return {};
-    return JSON.parse(fs.readFileSync(configPath, 'utf8')) || {};
-  } catch {
-    return {};
+function resolvePiCodingAgentRoot(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error('piCodingAgentRoot is required');
   }
-}
-
-function findPiCodingAgentRoot(agentDir) {
-  const runtimeConfig = readRuntimeConfig();
-  const candidates = [
-    process.env.PI_CODING_AGENT_ROOT,
-    runtimeConfig.piCodingAgentRoot,
-    agentDir ? path.join(agentDir, 'npm', 'node_modules', '@earendil-works', 'pi-coding-agent') : '',
-    agentDir ? path.join(agentDir, 'npm', 'node_modules', '@agegr', 'pi-web', 'node_modules', '@earendil-works', 'pi-coding-agent') : '',
-    path.resolve(process.cwd(), 'node_modules', '@earendil-works', 'pi-coding-agent'),
-    path.resolve(process.cwd(), '..', 'node_modules', '@earendil-works', 'pi-coding-agent'),
-    path.resolve(process.cwd(), 'pi-web', 'node_modules', '@earendil-works', 'pi-coding-agent'),
-    path.join(ipiLocalAppDataDir(), 'runtime', 'pi', 'node_modules', '@earendil-works', 'pi-coding-agent'),
-    path.join(os.homedir(), 'AppData', 'Roaming', 'npm', 'node_modules', '@earendil-works', 'pi-coding-agent'),
-    path.join(os.homedir(), 'AppData', 'Roaming', 'npm', 'node_modules', '@agegr', 'pi-web', 'node_modules', '@earendil-works', 'pi-coding-agent'),
-    path.join(process.env.APPDATA || '', 'npm', 'node_modules', '@earendil-works', 'pi-coding-agent'),
-    path.join(process.env.APPDATA || '', 'npm', 'node_modules', '@agegr', 'pi-web', 'node_modules', '@earendil-works', 'pi-coding-agent'),
-  ];
-  for (const candidate of candidates) {
-    if (!candidate || typeof candidate !== 'string') continue;
-    if (fs.existsSync(path.join(candidate, 'dist', 'index.js'))) return candidate;
+  const root = fs.realpathSync(value.trim());
+  const entryPoint = path.join(root, 'dist', 'index.js');
+  if (!fs.statSync(entryPoint).isFile()) {
+    throw new Error(`Invalid piCodingAgentRoot: ${root}`);
   }
-  throw new Error('Could not find @earendil-works/pi-coding-agent. Install pi-web or set piCodingAgentRoot in %AppData%/ipi/runtime.json.');
+  return { root, entryPoint };
 }
 
-async function loadPi(agentDir) {
-  const root = findPiCodingAgentRoot(agentDir);
-  const mod = await import(pathToFileURL(path.join(root, 'dist', 'index.js')).href);
+async function loadPi(piCodingAgentRoot) {
+  const { root, entryPoint } = resolvePiCodingAgentRoot(piCodingAgentRoot);
+  const mod = await import(pathToFileURL(entryPoint).href);
   return { root, mod };
 }
 
@@ -130,76 +103,25 @@ function summarizeToolRequest(toolName, args) {
   return compact.length > 180 ? `${compact.slice(0, 180)}…` : compact;
 }
 
-function isOutsideWorkspace(candidate, input) {
-  if (!candidate) return false;
-  const root = path.resolve(input.cwd || process.cwd());
-  const resolved = path.resolve(root, String(candidate));
-  const rootLower = root.toLowerCase();
-  const resolvedLower = resolved.toLowerCase();
-  return resolvedLower !== rootLower && !resolvedLower.startsWith(`${rootLower}${path.sep}`);
-}
-
-function approvalRuleValue(input, key, fallback = 'allow') {
-  const rules = input.approvalRules && typeof input.approvalRules === 'object' ? input.approvalRules : null;
-  if (!rules) return fallback;
-  const value = String(rules[key] || '').toLowerCase();
-  return value === 'ask' ? 'ask' : 'allow';
-}
-
-function requiresApproval(toolName, args, input) {
-  const rules = input.approvalRules && typeof input.approvalRules === 'object' ? input.approvalRules : null;
-  const candidate = args?.path || args?.filePath;
-
-  if (rules) {
-    if (toolName === 'read') return isOutsideWorkspace(candidate, input) && approvalRuleValue(input, 'read_outside_workspace', 'ask') === 'ask';
-    if (toolName === 'bash') return approvalRuleValue(input, 'bash', 'ask') === 'ask';
-    if (toolName === 'edit') return approvalRuleValue(input, 'edit', 'ask') === 'ask';
-    if (toolName === 'write') return approvalRuleValue(input, 'write', 'ask') === 'ask';
-    return false;
-  }
-
-  const mode = input.approvalMode || 'default';
-  if (mode === 'auto' || mode === 'read-only') return false;
-
-  if (toolName === 'read') return false;
-
-  if (mode === 'on-risk') {
-    if (toolName === 'bash') return true;
-    if (['write', 'edit'].includes(toolName)) return isOutsideWorkspace(candidate, input);
-    return false;
-  }
-
-  if (['write', 'edit', 'bash'].includes(toolName)) return true;
-  return false;
-}
-
-async function requestToolApproval(toolName, args, input) {
+async function requestToolApproval(toolName, args, approvalRouter, scopeInput) {
   const approvalId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const summary = summarizeToolRequest(toolName, args);
+  const requestScope = buildToolApprovalScope(toolName, args, scopeInput);
+  const decision = approvalRouter.waitFor(approvalId);
   emit({
     type: 'approval_request',
     approvalId,
     toolName,
+    requestScope,
     summary,
     detail: JSON.stringify(sanitize(args), null, 2),
   });
-
-  while (true) {
-    const line = await inputIterator.next();
-    if (line.done) return { approved: false, reason: 'approval input closed' };
-    try {
-      const response = JSON.parse(line.value || '{}');
-      if (response.type === 'approval_response' && response.approvalId === approvalId) {
-        return { approved: !!response.approved, reason: String(response.reason || '') };
-      }
-    } catch {
-      // Ignore malformed control messages.
-    }
-  }
+  return decision;
 }
 
 async function main() {
   const input = await readInput();
+  const approvalRouter = new ApprovalRouter(inputIterator);
   const cwd = input.cwd || process.cwd();
   const agentDir = input.agentDir;
   const command = String(input.command || 'prompt');
@@ -208,9 +130,10 @@ async function main() {
   if (command === 'compact' && !input.sessionFile) throw new Error('sessionFile is required for compaction');
   if (!fs.existsSync(cwd)) throw new Error(`cwd does not exist: ${cwd}`);
 
-  const { root, mod } = await loadPi(agentDir);
-  const { createAgentSession, SessionManager, getAgentDir, AuthStorage, ModelRegistry } = mod;
+  const { root, mod } = await loadPi(input.piCodingAgentRoot);
+  const { createAgentSession, SessionManager, getAgentDir, AuthStorage, ModelRegistry, SettingsManager } = mod;
   const resolvedAgentDir = agentDir || getAgentDir?.();
+  if (typeof resolvedAgentDir !== 'string' || !resolvedAgentDir.trim()) throw new Error('agentDir is required');
 
   if (command === 'models' || command === 'provider_catalog') {
     const authStorage = AuthStorage.create(path.join(resolvedAgentDir, 'auth.json'));
@@ -254,6 +177,7 @@ async function main() {
   const sessionManager = input.sessionFile
     ? SessionManager.open(input.sessionFile, undefined)
     : SessionManager.create(cwd, undefined);
+  const settingsManager = SettingsManager.create(cwd, resolvedAgentDir, { projectTrusted: false });
 
   if (typeof input.branchFromEntryId === 'string' && input.sessionFile) {
     const branchFromEntryId = input.branchFromEntryId.trim();
@@ -279,42 +203,49 @@ async function main() {
     cwd,
     agentDir: resolvedAgentDir,
     sessionManager,
+    settingsManager,
     ...(selectedModel ? { model: selectedModel } : {}),
     ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
     ...(Array.isArray(input.tools) ? { tools: input.tools } : {}),
     ...(input.noTools ? { noTools: input.noTools } : {}),
   });
 
-  const upstreamBeforeToolCall = session.agent.beforeToolCall;
-  session.agent.beforeToolCall = async (context, signal) => {
-    const toolName = context?.toolCall?.name || 'tool';
-    const args = context?.args ?? {};
-    emit({ type: 'event', eventType: 'tool_intent', kind: 'tool', label: toolName, detail: summarizeToolRequest(toolName, args) });
-    if (requiresApproval(toolName, args, input)) {
-      const decision = await requestToolApproval(toolName, args, input);
-      if (!decision?.approved) return { block: true, reason: decision?.reason || `User denied ${toolName}` };
+  try {
+    const upstreamBeforeToolCall = session.agent.beforeToolCall;
+    session.agent.beforeToolCall = async (context, signal) => {
+      const toolName = context?.toolCall?.name || 'tool';
+      const args = context?.args ?? {};
+      emit({ type: 'event', eventType: 'tool_intent', kind: 'tool', label: toolName, detail: summarizeToolRequest(toolName, args) });
+      const scopeInput = { ...input, cwd };
+      const policy = decideToolPolicy(toolName, args, scopeInput);
+      if (policy.action === 'deny') return { block: true, reason: policy.reason };
+      if (policy.action === 'ask') {
+        const approval = await requestToolApproval(toolName, args, approvalRouter, scopeInput);
+        if (!approval?.approved) return { block: true, reason: approval?.reason || `User denied ${toolName}` };
+      }
+      return upstreamBeforeToolCall ? await upstreamBeforeToolCall(context, signal) : undefined;
+    };
+
+    let finalText = '';
+    session.subscribe((event) => {
+      if (event?.type === 'agent_end') finalText = lastAssistantText(event.messages) || finalText;
+      const summary = summarizeEvent(event);
+      if (summary) emit({ type: 'event', eventType: event.type, ...summary });
+    });
+
+    emit({ type: 'ready', sessionId: session.sessionId, sessionFile: session.sessionFile, packageRoot: root });
+    if (command === 'compact') {
+      const result = await session.compact(input.compactInstructions || undefined);
+      const before = typeof result?.tokensBefore === 'number' ? result.tokensBefore : undefined;
+      const after = typeof result?.estimatedTokensAfter === 'number' ? result.estimatedTokensAfter : undefined;
+      finalText = before && after ? `Compacted context: ${before} → ${after} tokens` : 'Compacted context';
+    } else {
+      await session.prompt(message, { source: 'rpc' });
     }
-    return upstreamBeforeToolCall ? await upstreamBeforeToolCall(context, signal) : undefined;
-  };
-
-  let finalText = '';
-  session.subscribe((event) => {
-    if (event?.type === 'agent_end') finalText = lastAssistantText(event.messages) || finalText;
-    const summary = summarizeEvent(event);
-    if (summary) emit({ type: 'event', eventType: event.type, ...summary });
-  });
-
-  emit({ type: 'ready', sessionId: session.sessionId, sessionFile: session.sessionFile, packageRoot: root });
-  if (command === 'compact') {
-    const result = await session.compact(input.compactInstructions || undefined);
-    const before = typeof result?.tokensBefore === 'number' ? result.tokensBefore : undefined;
-    const after = typeof result?.estimatedTokensAfter === 'number' ? result.estimatedTokensAfter : undefined;
-    finalText = before && after ? `Compacted context: ${before} → ${after} tokens` : 'Compacted context';
-  } else {
-    await session.prompt(message, { source: 'rpc' });
+    emit({ type: 'done', sessionId: session.sessionId, sessionFile: session.sessionFile, finalText });
+  } finally {
+    session.dispose?.();
   }
-  emit({ type: 'done', sessionId: session.sessionId, sessionFile: session.sessionFile, finalText });
-  session.dispose?.();
   inputLines.close();
 }
 

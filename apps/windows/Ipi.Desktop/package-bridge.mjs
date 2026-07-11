@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { pathToFileURL } from 'node:url';
@@ -21,50 +20,21 @@ function readJsonFile(file) {
   return JSON.parse(raw);
 }
 
-function ipiAppDataDir() {
-  return process.env.IPI_APPDATA_DIR || path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'ipi');
-}
-
-function ipiLocalAppDataDir() {
-  return process.env.IPI_LOCALAPPDATA_DIR || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'ipi');
-}
-
-function readRuntimeConfig() {
-  try {
-    const configPath = path.join(ipiAppDataDir(), 'runtime.json');
-    if (!fs.existsSync(configPath)) return {};
-    return readJsonFile(configPath) || {};
-  } catch {
-    return {};
+function resolvePiCodingAgentRoot(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error('piCodingAgentRoot is required');
   }
-}
-
-function findPiCodingAgentRoot(agentDir) {
-  const runtimeConfig = readRuntimeConfig();
-  const candidates = [
-    process.env.PI_CODING_AGENT_ROOT,
-    runtimeConfig.piCodingAgentRoot,
-    agentDir ? path.join(agentDir, 'npm', 'node_modules', '@earendil-works', 'pi-coding-agent') : '',
-    agentDir ? path.join(agentDir, 'npm', 'node_modules', '@agegr', 'pi-web', 'node_modules', '@earendil-works', 'pi-coding-agent') : '',
-    path.resolve(process.cwd(), 'node_modules', '@earendil-works', 'pi-coding-agent'),
-    path.resolve(process.cwd(), '..', 'node_modules', '@earendil-works', 'pi-coding-agent'),
-    path.resolve(process.cwd(), 'pi-web', 'node_modules', '@earendil-works', 'pi-coding-agent'),
-    path.join(ipiLocalAppDataDir(), 'runtime', 'pi', 'node_modules', '@earendil-works', 'pi-coding-agent'),
-    path.join(os.homedir(), 'AppData', 'Roaming', 'npm', 'node_modules', '@earendil-works', 'pi-coding-agent'),
-    path.join(os.homedir(), 'AppData', 'Roaming', 'npm', 'node_modules', '@agegr', 'pi-web', 'node_modules', '@earendil-works', 'pi-coding-agent'),
-    path.join(process.env.APPDATA || '', 'npm', 'node_modules', '@earendil-works', 'pi-coding-agent'),
-    path.join(process.env.APPDATA || '', 'npm', 'node_modules', '@agegr', 'pi-web', 'node_modules', '@earendil-works', 'pi-coding-agent'),
-  ];
-  for (const candidate of candidates) {
-    if (!candidate || typeof candidate !== 'string') continue;
-    if (fs.existsSync(path.join(candidate, 'dist', 'index.js'))) return candidate;
+  const root = fs.realpathSync(value.trim());
+  const entryPoint = path.join(root, 'dist', 'index.js');
+  if (!fs.statSync(entryPoint).isFile()) {
+    throw new Error(`Invalid piCodingAgentRoot: ${root}`);
   }
-  throw new Error('Could not find @earendil-works/pi-coding-agent. Install pi-web or set piCodingAgentRoot in %AppData%/ipi/runtime.json.');
+  return { root, entryPoint };
 }
 
-async function loadPi(agentDir) {
-  const root = findPiCodingAgentRoot(agentDir);
-  const mod = await import(pathToFileURL(path.join(root, 'dist', 'index.js')).href);
+async function loadPi(piCodingAgentRoot) {
+  const { root, entryPoint } = resolvePiCodingAgentRoot(piCodingAgentRoot);
+  const mod = await import(pathToFileURL(entryPoint).href);
   return { root, mod };
 }
 
@@ -98,6 +68,74 @@ function isDisabledPackage(entry) {
     Array.isArray(entry?.skills) && entry.skills.length === 0 &&
     Array.isArray(entry?.prompts) && entry.prompts.length === 0 &&
     Array.isArray(entry?.themes) && entry.themes.length === 0;
+}
+
+function isWithin(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+}
+
+function readUntrustedProjectPackages(cwd, packageManager, diagnostics) {
+  const settingsPath = path.join(cwd, '.pi', 'settings.json');
+  if (!fs.existsSync(settingsPath)) return [];
+
+  try {
+    const workspace = fs.realpathSync(cwd);
+    const resolvedSettingsPath = fs.realpathSync(settingsPath);
+    if (!isWithin(workspace, resolvedSettingsPath)) {
+      throw new Error('project settings resolve outside the workspace');
+    }
+
+    const stats = fs.statSync(resolvedSettingsPath);
+    if (!stats.isFile()) throw new Error('project settings are not a file');
+    if (stats.size > 1024 * 1024) throw new Error('project settings exceed the 1 MiB display limit');
+
+    const settings = readJsonFile(resolvedSettingsPath);
+    if (!Array.isArray(settings?.packages)) return [];
+    const seen = new Set();
+    const packages = [];
+    for (const entry of settings.packages) {
+      const source = getPackageSource(entry).trim();
+      if (!source || seen.has(source)) continue;
+      seen.add(source);
+      let installedPath;
+      try {
+        installedPath = packageManager.getInstalledPath(source, 'project');
+      } catch (error) {
+        diagnostics.push({
+          type: 'warning',
+          source,
+          message: `Unable to resolve the read-only project package path: ${error instanceof Error ? error.message : String(error)}`,
+        });
+      }
+      packages.push({
+        source,
+        scope: 'project',
+        filtered: typeof entry === 'object' && entry !== null,
+        disabled: true,
+        installedPath,
+        packageName: source,
+        version: '',
+        configuredVersion: getConfiguredVersion(source) || '',
+        counts: emptyCounts(),
+        resources: [],
+        status: 'untrusted',
+      });
+    }
+    if (packages.length > 0) {
+      diagnostics.push({
+        type: 'warning',
+        message: 'Project packages are displayed read-only and are not loaded until workspace trust is implemented.',
+      });
+    }
+    return packages;
+  } catch (error) {
+    diagnostics.push({
+      type: 'error',
+      message: `Unable to display untrusted project packages: ${error instanceof Error ? error.message : String(error)}`,
+    });
+    return [];
+  }
 }
 
 function getDisabledPackages(settingsManager) {
@@ -224,14 +262,14 @@ function createManagers(input, mod) {
   const cwd = input.cwd || process.cwd();
   const agentDir = input.agentDir || mod.getAgentDir?.();
   if (!fs.existsSync(cwd)) throw new Error(`cwd does not exist: ${cwd}`);
-  const settingsManager = mod.SettingsManager.create(cwd, agentDir, { projectTrusted: true });
+  const settingsManager = mod.SettingsManager.create(cwd, agentDir, { projectTrusted: false });
   const packageManager = new mod.DefaultPackageManager({ cwd, agentDir, settingsManager });
   packageManager.setProgressCallback((event) => emit({ type: 'progress', event }));
   return { cwd, agentDir, settingsManager, packageManager };
 }
 
 async function readPackages(input, mod) {
-  const { settingsManager, packageManager } = createManagers(input, mod);
+  const { cwd, settingsManager, packageManager } = createManagers(input, mod);
   const diagnostics = [];
   let countsByPackage = new Map();
   let resourcesByPackage = new Map();
@@ -272,6 +310,7 @@ async function readPackages(input, mod) {
       status: disabled ? 'disabled' : resourceCount > 0 ? 'loaded' : installedPath ? 'installed' : 'missing',
     };
   });
+  packages.push(...readUntrustedProjectPackages(cwd, packageManager, diagnostics));
 
   return { packages, totals, diagnostics };
 }
@@ -280,6 +319,9 @@ async function runAction(input, mod) {
   const action = String(input.action || 'list');
   const source = String(input.source || '').trim();
   const scope = toPluginScope(input.scope);
+  if (scope === 'project' && ['install', 'update', 'remove', 'enable', 'disable'].includes(action)) {
+    throw new Error('Project package actions are disabled until explicit workspace trust is implemented.');
+  }
   const { settingsManager, packageManager } = createManagers(input, mod);
   if (action === 'install') {
     if (!source) throw new Error('source required');
@@ -301,7 +343,7 @@ async function runAction(input, mod) {
 
 async function main() {
   const input = await readInput();
-  const { root, mod } = await loadPi(input.agentDir);
+  const { root, mod } = await loadPi(input.piCodingAgentRoot);
   const response = await runAction(input, mod);
   emit({ type: 'packages', packageRoot: root, ...response });
   inputLines.close();

@@ -10,6 +10,8 @@ namespace Ipi.Desktop.Services;
 public sealed class PiDataService
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    private const int MaxEmbeddedSessionImageBytes = 10 * 1024 * 1024;
+    private const int MaxEmbeddedSessionImageBase64Chars = ((MaxEmbeddedSessionImageBytes + 2) / 3) * 4;
     private readonly string _appDataDir = IpiPathService.AppDataDir;
 
     public PiRuntimeInfo RuntimeInfo { get; } = new PiRuntimeService().Resolve();
@@ -18,6 +20,7 @@ public sealed class PiDataService
     public string SessionsDir => RuntimeInfo.SessionsDir;
     public string SettingsPath => RuntimeInfo.SettingsPath;
     public string ModelsPath => RuntimeInfo.ModelsPath;
+    public string SkillsSettingsPath => SkillSettingsPath;
 
     public IReadOnlyList<PiSessionRecord> ListSessions(int take = 80)
     {
@@ -674,7 +677,7 @@ public sealed class PiDataService
     public string ReadTextPreview(string filePath, int maxBytes = 128 * 1024)
     {
         if (!File.Exists(filePath)) return "File not found.";
-        if (IsSensitiveFile(filePath)) return "Preview omitted for sensitive-looking file. Use path-only attachment unless you explicitly need to inspect this secret.";
+        if (IsSensitiveFilePath(filePath)) return "Preview omitted for sensitive-looking file. Use path-only attachment unless you explicitly need to inspect this secret.";
         var info = new FileInfo(filePath);
         if (info.Length > maxBytes) return $"File is too large for preview ({FormatSize(info.Length)}).";
         var ext = Path.GetExtension(filePath).ToLowerInvariant();
@@ -683,14 +686,17 @@ public sealed class PiDataService
         try { return File.ReadAllText(filePath); } catch (Exception ex) { return ex.Message; }
     }
 
-    private static bool IsSensitiveFile(string path)
+    public static bool IsSensitiveFilePath(string path)
     {
         var name = Path.GetFileName(path).ToLowerInvariant();
         var ext = Path.GetExtension(path).ToLowerInvariant();
         if (name.StartsWith(".env")) return true;
+        if (name is "auth.json" or "credentials" or "credentials.json" or ".npmrc" or ".git-credentials" or ".netrc" or "secrets.json" or "secrets.yml" or "secrets.yaml" or "token.json" or "tokens.json") return true;
+        if (name.StartsWith("oauth", StringComparison.OrdinalIgnoreCase) && ext == ".json") return true;
+        if (name.StartsWith("service-account", StringComparison.OrdinalIgnoreCase) && ext == ".json") return true;
         if (name.Contains("mnemonic") || name.Contains("seed") || name.Contains("wallet")) return true;
         if (name is "id_rsa" or "id_dsa" or "id_ecdsa" or "id_ed25519") return true;
-        return ext is ".pem" or ".key" or ".p12" or ".pfx";
+        return ext is ".pem" or ".key" or ".p12" or ".pfx" or ".kdbx" or ".keystore" or ".jks";
     }
 
     public IReadOnlyList<PluginPackageRecord> ListPackages()
@@ -1025,7 +1031,11 @@ public sealed class PiDataService
         if (string.IsNullOrWhiteSpace(data)) return null;
         try
         {
-            var bytes = Convert.FromBase64String(data.Contains(',') ? data[(data.IndexOf(',') + 1)..] : data);
+            var commaIndex = data.IndexOf(',');
+            var payload = commaIndex >= 0 ? data[(commaIndex + 1)..] : data;
+            if (payload.Length > MaxEmbeddedSessionImageBase64Chars) return null;
+            var bytes = Convert.FromBase64String(payload);
+            if (bytes.Length > MaxEmbeddedSessionImageBytes) return null;
             var ext = MimeExtension(mimeType);
             var hash = Convert.ToHexString(SHA256.HashData(bytes))[..16].ToLowerInvariant();
             var safeEntry = string.IsNullOrWhiteSpace(entryId) ? "image" : Regex.Replace(entryId, "[^a-zA-Z0-9_-]", "");
@@ -1289,7 +1299,7 @@ public sealed class PiDataService
             catch { }
         }
 
-        return new PluginPackageRecord(source, scope, disabled, string.IsNullOrWhiteSpace(packageName) ? source : packageName, version, installedPath, resources);
+        return new PluginPackageRecord(source, scope, disabled ? "disabled" : string.Empty, disabled, string.IsNullOrWhiteSpace(packageName) ? source : packageName, version, installedPath, resources);
     }
 
     private string ResolvePackageInstallPath(string source, string packageName)

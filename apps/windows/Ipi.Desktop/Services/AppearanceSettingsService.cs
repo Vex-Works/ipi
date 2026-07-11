@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Win32;
 
@@ -33,7 +34,28 @@ public sealed class AppearanceSettingsService
     public void Save(AppearanceSettings settings)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_settingsPath)!);
-        File.WriteAllText(_settingsPath, JsonSerializer.Serialize(settings.Normalize(), JsonOptions));
+        WriteTextAtomically(_settingsPath, JsonSerializer.Serialize(settings.Normalize(), JsonOptions));
+    }
+
+    private static void WriteTextAtomically(string path, string content)
+    {
+        var directory = Path.GetDirectoryName(path) ?? throw new InvalidOperationException($"Path has no parent directory: {path}");
+        var temporaryPath = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+            using (var writer = new StreamWriter(stream, new UTF8Encoding(false)))
+            {
+                writer.Write(content);
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(temporaryPath, path, overwrite: true);
+        }
+        finally
+        {
+            try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); } catch { }
+        }
     }
 }
 

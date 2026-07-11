@@ -16,7 +16,20 @@ public partial class App
         DispatcherUnhandledException += (_, args) =>
         {
             LogCrash("DispatcherUnhandledException", args.Exception);
+            try
+            {
+                MessageBox.Show(
+                    "ipi encountered an unexpected error and must close. Details were written to the local crash log.",
+                    "ipi",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            catch
+            {
+                // The dispatcher may already be partially unavailable.
+            }
             args.Handled = true;
+            Shutdown(-1);
         };
         AppDomain.CurrentDomain.UnhandledException += (_, args) => LogCrash("UnhandledException", args.ExceptionObject as Exception);
         TaskScheduler.UnobservedTaskException += (_, args) =>

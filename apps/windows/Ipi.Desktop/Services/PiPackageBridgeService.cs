@@ -35,9 +35,10 @@ public sealed class PiPackageBridgeService
         var bridgePath = Path.Combine(AppContext.BaseDirectory, "package-bridge.mjs");
         if (!File.Exists(bridgePath)) throw new FileNotFoundException("ipi package bridge was not copied to the output directory", bridgePath);
         var workingDirectory = Directory.Exists(cwd) ? cwd : AppContext.BaseDirectory;
+        var runtime = ResolveBridgeRuntime();
         var psi = new ProcessStartInfo
         {
-            FileName = new PiRuntimeService().Resolve().NodePath ?? "node",
+            FileName = runtime.NodeCommand,
             WorkingDirectory = workingDirectory,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -48,10 +49,14 @@ public sealed class PiPackageBridgeService
             StandardErrorEncoding = Encoding.UTF8,
         };
         psi.ArgumentList.Add(bridgePath);
+        ConfigureBridgeEnvironment(psi);
 
         using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         if (!process.Start()) throw new InvalidOperationException("failed to start node package bridge");
-        using var cancellationRegistration = cancellationToken.Register(() =>
+        var timeout = action == "list" ? TimeSpan.FromMinutes(2) : TimeSpan.FromMinutes(10);
+        using var timeoutCancellation = new CancellationTokenSource(timeout);
+        using var combinedCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCancellation.Token);
+        using var cancellationRegistration = combinedCancellation.Token.Register(() =>
         {
             try
             {
@@ -64,15 +69,31 @@ public sealed class PiPackageBridgeService
         {
             cwd = workingDirectory,
             agentDir,
+            piCodingAgentRoot = runtime.PiCodingAgentRoot,
             action,
             source,
             scope = string.Equals(scope, "project", StringComparison.OrdinalIgnoreCase) ? "project" : "global",
         }));
         process.StandardInput.Close();
 
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken);
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        try
+        {
+            await process.WaitForExitAsync(combinedCancellation.Token);
+        }
+        catch (OperationCanceledException) when (timeoutCancellation.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)); } catch { }
+            try { await Task.WhenAll(stdoutTask, stderrTask).WaitAsync(TimeSpan.FromSeconds(2)); } catch { }
+            throw new TimeoutException($"package bridge {action} timed out after {timeout.TotalMinutes:0} minutes and its process tree was stopped");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)); } catch { }
+            try { await Task.WhenAll(stdoutTask, stderrTask).WaitAsync(TimeSpan.FromSeconds(2)); } catch { }
+            throw;
+        }
         var stdout = await stdoutTask;
         var stderr = await stderrTask;
         var packages = new List<PluginPackageRecord>();
@@ -112,11 +133,36 @@ public sealed class PiPackageBridgeService
         return packages;
     }
 
+    private static (string NodeCommand, string PiCodingAgentRoot) ResolveBridgeRuntime()
+    {
+        var runtime = new PiRuntimeService().Resolve();
+        if (string.IsNullOrWhiteSpace(runtime.PiCodingAgentRoot))
+        {
+            throw new InvalidOperationException("Pi coding agent runtime was not found");
+        }
+
+        var piCodingAgentRoot = Path.GetFullPath(runtime.PiCodingAgentRoot);
+        var entryPoint = Path.Combine(piCodingAgentRoot, "dist", "index.js");
+        if (!File.Exists(entryPoint))
+        {
+            throw new FileNotFoundException("Pi coding agent runtime entry point was not found", entryPoint);
+        }
+
+        return (runtime.NodePath ?? "node", piCodingAgentRoot);
+    }
+
+    private static void ConfigureBridgeEnvironment(ProcessStartInfo psi)
+    {
+        psi.Environment["IPI_APPDATA_DIR"] = IpiPathService.AppDataDir;
+        psi.Environment["IPI_LOCALAPPDATA_DIR"] = IpiPathService.LocalAppDataDir;
+    }
+
     private static PluginPackageRecord ParsePackage(JsonElement item)
     {
         var source = GetString(item, "source");
         var scope = GetString(item, "scope");
-        var disabled = GetString(item, "status").Equals("disabled", StringComparison.OrdinalIgnoreCase)
+        var status = GetString(item, "status");
+        var disabled = status.Equals("disabled", StringComparison.OrdinalIgnoreCase)
             || item.TryGetProperty("disabled", out var disabledElement) && disabledElement.ValueKind == JsonValueKind.True;
         var packageName = GetString(item, "packageName");
         var version = GetString(item, "version");
@@ -133,7 +179,7 @@ public sealed class PiPackageBridgeService
                 if (!string.IsNullOrWhiteSpace(kind) && !string.IsNullOrWhiteSpace(name)) resources.Add(new PluginResourceRecord(kind, name, path));
             }
         }
-        return new PluginPackageRecord(source, string.IsNullOrWhiteSpace(scope) ? "global" : scope, disabled, string.IsNullOrWhiteSpace(packageName) ? source : packageName, version, installedPath, resources);
+        return new PluginPackageRecord(source, string.IsNullOrWhiteSpace(scope) ? "global" : scope, status, disabled, string.IsNullOrWhiteSpace(packageName) ? source : packageName, version, installedPath, resources);
     }
 
     private static string GetString(JsonElement element, string property)

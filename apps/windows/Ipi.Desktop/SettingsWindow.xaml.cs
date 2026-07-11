@@ -1,7 +1,10 @@
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -37,7 +40,23 @@ public partial class SettingsWindow
         InitializeComponent();
         DataContext = viewModel;
         viewModel.SettingsChanged += ApplyAppearanceSettings;
-        Loaded += (_, _) => ApplyAppearanceSettings(viewModel.CurrentSettings);
+        Loaded += (_, _) =>
+        {
+            ApplyAppearanceSettings(viewModel.CurrentSettings);
+            Dispatcher.BeginInvoke(() =>
+            {
+                var target = viewModel.IsModelsSection ? ModelsSettingsButton
+                    : viewModel.IsSkillsSection ? SkillsSettingsButton
+                    : viewModel.IsPackagesSection ? PackagesSettingsButton
+                    : viewModel.IsArchiveSection ? ArchivedSettingsButton
+                    : viewModel.IsStorageSection ? StorageSettingsButton
+                    : viewModel.IsDiagnosticsSection ? DiagnosticsSettingsButton
+                    : AppearanceSettingsButton;
+                target.Focus();
+                Keyboard.Focus(target);
+            }, System.Windows.Threading.DispatcherPriority.Input);
+        };
+        Closing += (_, _) => viewModel.CancelActiveOperations();
         Closed += (_, _) => viewModel.SettingsChanged -= ApplyAppearanceSettings;
     }
 
@@ -134,7 +153,7 @@ public partial class SettingsWindow
                 SetBrush("SettingsCard", Color.FromArgb(cardAlpha, 232, 230, 224));
                 SetBrush("SettingsText", Color.FromRgb(25, 37, 170));
                 SetBrush("SettingsMuted", Color.FromRgb(25, 37, 170));
-                SetBrush("SettingsDim", Color.FromRgb(94, 105, 196));
+                SetBrush("SettingsDim", Color.FromRgb(75, 85, 170));
                 SetBrush("SettingsLine", Color.FromArgb(58, 25, 37, 170));
                 SetBrush("SettingsWindowBorder", Color.FromRgb(25, 37, 170));
                 SetBrush("SettingsControlBg", Color.FromRgb(232, 230, 224));
@@ -159,7 +178,7 @@ public partial class SettingsWindow
                 SetBrush("SettingsCard", Color.FromRgb(22, 22, 22));
                 SetBrush("SettingsText", Color.FromRgb(255, 252, 246));
                 SetBrush("SettingsMuted", Color.FromRgb(204, 204, 204));
-                SetBrush("SettingsDim", Color.FromRgb(140, 140, 140));
+                SetBrush("SettingsDim", Color.FromRgb(96, 96, 96));
                 SetBrush("SettingsLine", Color.FromRgb(51, 51, 51));
                 SetBrush("SettingsWindowBorder", Color.FromRgb(196, 201, 221));
                 SetBrush("SettingsControlBg", Color.FromRgb(45, 32, 43));
@@ -203,8 +222,8 @@ public partial class SettingsWindow
             SetBrush("SettingsSidebarBg", Color.FromArgb(sidebarAlpha, 232, 237, 247));
             SetBrush("SettingsCard", Color.FromArgb(cardAlpha, 255, 255, 255));
             SetBrush("SettingsText", Color.FromRgb(36, 39, 51));
-            SetBrush("SettingsMuted", Color.FromRgb(122, 129, 144));
-            SetBrush("SettingsDim", Color.FromRgb(154, 162, 177));
+            SetBrush("SettingsMuted", Color.FromRgb(98, 106, 122));
+            SetBrush("SettingsDim", Color.FromRgb(101, 109, 125));
             SetBrush("SettingsLine", Color.FromRgb(204, 212, 229));
             SetBrush("SettingsWindowBorder", Color.FromRgb(174, 184, 206));
             SetBrush("SettingsControlBg", Color.FromRgb(232, 237, 249));
@@ -226,7 +245,7 @@ public partial class SettingsWindow
             SetBrush("SettingsCard", Color.FromArgb(cardAlpha, 24, 26, 31));
             SetBrush("SettingsText", Color.FromRgb(243, 244, 246));
             SetBrush("SettingsMuted", Color.FromRgb(169, 173, 183));
-            SetBrush("SettingsDim", Color.FromRgb(116, 121, 134));
+            SetBrush("SettingsDim", Color.FromRgb(138, 145, 158));
             SetBrush("SettingsLine", Color.FromRgb(54, 59, 69));
             SetBrush("SettingsWindowBorder", Color.FromRgb(70, 76, 88));
             SetBrush("SettingsControlBg", Color.FromRgb(31, 34, 41));
@@ -415,6 +434,11 @@ public partial class SettingsWindow
         if (DataContext is SettingsWindowViewModel viewModel && sender is FrameworkElement { DataContext: SettingsSkillSourceItem item }) viewModel.SelectSkillSource(item);
     }
 
+    private void SkillSourceButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is SettingsWindowViewModel viewModel && sender is FrameworkElement { DataContext: SettingsSkillSourceItem item }) viewModel.SelectSkillSource(item);
+    }
+
     private void SkillSourceToggle_Click(object sender, RoutedEventArgs e)
     {
         e.Handled = true;
@@ -435,16 +459,6 @@ public partial class SettingsWindow
     private void AddPackageOpen_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is SettingsWindowViewModel viewModel) viewModel.OpenAddPackage();
-    }
-
-    private void PackageScopeGlobal_Click(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is SettingsWindowViewModel viewModel) viewModel.PackageInstallScope = "global";
-    }
-
-    private void PackageScopeProject_Click(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is SettingsWindowViewModel viewModel) viewModel.PackageInstallScope = "project";
     }
 
     private async void AddPackageConfirm_Click(object sender, RoutedEventArgs e)
@@ -470,6 +484,7 @@ public partial class SettingsWindow
     private async void UpdatePackage_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not SettingsWindowViewModel viewModel) return;
+        if (!viewModel.SelectedPackageActionButtonEnabled) return;
         if (!ShowPackageActionConfirm(
                 viewModel.Language == "en-US" ? "Update package" : "更新插件包",
                 viewModel.Language == "en-US" ? "This will run Pi package update. npm/git/https sources may download code and execute install scripts from the package author." : "这会运行 Pi package update。npm/git/https 来源可能下载代码并执行 package 作者提供的安装脚本。",
@@ -483,6 +498,7 @@ public partial class SettingsWindow
     private async void RemovePackage_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not SettingsWindowViewModel viewModel) return;
+        if (!viewModel.SelectedPackageActionButtonEnabled) return;
         if (!ShowPackageActionConfirm(
                 viewModel.Language == "en-US" ? "Uninstall package" : "卸载插件包",
                 viewModel.SelectedPluginPackageHasManagedInstall
@@ -503,6 +519,11 @@ public partial class SettingsWindow
     }
 
     private void SettingsPluginPackageRow_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (DataContext is SettingsWindowViewModel viewModel && sender is FrameworkElement { DataContext: PluginPackageViewItem item }) viewModel.SelectPluginPackage(item);
+    }
+
+    private void SettingsPluginPackageButton_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is SettingsWindowViewModel viewModel && sender is FrameworkElement { DataContext: PluginPackageViewItem item }) viewModel.SelectPluginPackage(item);
     }
@@ -540,7 +561,46 @@ public partial class SettingsWindow
 
     private void SaveProvider_Click(object sender, RoutedEventArgs e)
     {
-        if (DataContext is SettingsWindowViewModel viewModel) viewModel.SaveNewProvider();
+        if (DataContext is SettingsWindowViewModel viewModel && ValidateProviderSecurity(viewModel)) viewModel.SaveNewProvider();
+    }
+
+    private bool ValidateProviderSecurity(SettingsWindowViewModel viewModel)
+    {
+        if (!Uri.TryCreate(viewModel.NewProviderBaseUrl.Trim(), UriKind.Absolute, out var endpoint) ||
+            !string.IsNullOrEmpty(endpoint.UserInfo) ||
+            !(endpoint.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+              endpoint.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) && endpoint.IsLoopback))
+        {
+            MessageBox.Show(
+                this,
+                viewModel.Language == "en-US"
+                    ? "Remote endpoints require HTTPS; HTTP is loopback-only, and URL credentials are not allowed."
+                    : "远程 Provider 地址必须使用 HTTPS。只有 localhost 或其他回环地址可以使用 HTTP。",
+                viewModel.Language == "en-US" ? "Unsafe provider URL" : "Provider 地址不安全",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            SettingsProviderBaseUrlBox.Focus();
+            SettingsProviderBaseUrlBox.SelectAll();
+            return false;
+        }
+
+        var apiKeyReference = viewModel.NewProviderApiKeyRef.Trim();
+        if (apiKeyReference.Length > 0 && !Regex.IsMatch(apiKeyReference, "^\\$[A-Za-z_][A-Za-z0-9_]*$"))
+        {
+            viewModel.NewProviderApiKeyRef = string.Empty;
+            MessageBox.Show(
+                this,
+                viewModel.Language == "en-US"
+                    ? "Enter an environment variable reference such as $OPENAI_API_KEY. Secret values are not stored in models.json."
+                    : "请输入环境变量引用，例如 $OPENAI_API_KEY。密钥明文不会写入 models.json。",
+                viewModel.Language == "en-US" ? "Use an environment variable" : "请使用环境变量",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            SettingsProviderApiKeyRefBox.Focus();
+            return false;
+        }
+
+        return true;
     }
 
     private void RestoreArchived_Click(object sender, RoutedEventArgs e)
@@ -808,4 +868,13 @@ public partial class SettingsWindow
     {
         if (DataContext is SettingsWindowViewModel viewModel) viewModel.CleanMissingArchivedSessions();
     }
+}
+
+public sealed class InverseBooleanConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        => value is bool flag && !flag;
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        => value is bool flag && !flag;
 }

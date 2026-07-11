@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -14,7 +15,7 @@ using Ipi.Desktop.Services;
 
 namespace Ipi.Desktop;
 
-public sealed class MainWindowViewModel : INotifyPropertyChanged
+public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 {
     private static readonly string AppDataRoot = IpiPathService.AppDataDir;
     private static readonly string WorkspaceConfigPath = Path.Combine(AppDataRoot, "workspace.json");
@@ -35,14 +36,16 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private int _viewVersion;
     private int? _visibleRunVersion;
     private CancellationTokenSource? _runCancellation;
-    private readonly HashSet<string> _runAllowedTools = new(StringComparer.OrdinalIgnoreCase);
+    private CancellationTokenSource? _compactionCancellation;
     private CancellationTokenSource? _sessionLoadCancellation;
+    private CancellationTokenSource? _pluginCancellation;
     private int _sessionLoadVersion;
     private readonly DispatcherTimer _runElapsedTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private DateTime _runStartedAt;
     private string _liveStatusTitle = string.Empty;
     private string _liveStatusDetail = string.Empty;
     private readonly Dictionary<string, LiveRunViewState> _liveRunsBySessionFile = new(StringComparer.OrdinalIgnoreCase);
+    private bool _isDisposed;
     public bool IsAgentRunning
     {
         get => _isAgentRunning;
@@ -419,12 +422,20 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private bool _isUpdateCheckRunning;
     private bool _isUpdateApplyRunning;
     private bool _hasUpstreamUpdate;
+    private bool _hasAppRepoUpdate;
+    private bool _hasPiRuntimeUpdate;
+    private int _updateOperationActive;
+    private CancellationTokenSource? _updateCancellation;
     private string _updateStatusText = string.Empty;
     private string _updateDetailText = string.Empty;
     private string? _updateRepoRoot;
     private string? _updateUpstream;
+    private string? _piRuntimePackageSpec;
+    private string? _piRuntimePackageDirectory;
+    private string? _piRuntimeNpmCommand;
+    private int _localDataRefreshVersion;
     public bool IsUpdatePopupOpen { get => _isUpdatePopupOpen; set { _isUpdatePopupOpen = value; OnPropertyChanged(); } }
-    public bool IsUpdateCheckRunning { get => _isUpdateCheckRunning; private set { _isUpdateCheckRunning = value; OnPropertyChanged(); OnPropertyChanged(nameof(UpdateButtonVisibility)); OnPropertyChanged(nameof(UpdateActionText)); OnPropertyChanged(nameof(UpdateAvailableText)); } }
+    public bool IsUpdateCheckRunning { get => _isUpdateCheckRunning; private set { _isUpdateCheckRunning = value; OnPropertyChanged(); OnPropertyChanged(nameof(UpdateButtonVisibility)); OnPropertyChanged(nameof(CanApplyUpdate)); OnPropertyChanged(nameof(UpdateActionText)); OnPropertyChanged(nameof(UpdateAvailableText)); } }
     public bool IsUpdateApplyRunning { get => _isUpdateApplyRunning; private set { _isUpdateApplyRunning = value; OnPropertyChanged(); OnPropertyChanged(nameof(CanApplyUpdate)); OnPropertyChanged(nameof(UpdateActionText)); } }
     public bool HasUpstreamUpdate { get => _hasUpstreamUpdate; private set { _hasUpstreamUpdate = value; OnPropertyChanged(); OnPropertyChanged(nameof(UpdateButtonVisibility)); OnPropertyChanged(nameof(CanApplyUpdate)); OnPropertyChanged(nameof(UpdateAvailableText)); } }
     public Visibility UpdateButtonVisibility => HasUpstreamUpdate || IsUpdateCheckRunning ? Visibility.Visible : Visibility.Collapsed;
@@ -432,9 +443,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public string UpdateDetailText { get => _updateDetailText; private set { _updateDetailText = value; OnPropertyChanged(); } }
     public string UpdateAvailableText => L("有更新", "Update");
     public string UpdatePopupTitle => L("上游有更新", "Upstream update available");
-    public string UpdatePopupDescription => L("更新会拉取上游代码，重新发布 Windows 桌面端，然后自动重启 ipi。", "This pulls upstream changes, republishes the Windows desktop app, then restarts ipi.");
+    public string UpdatePopupDescription => L("更新会从隔离工作树构建 ipi 上游或准备 Pi runtime package，不改动源码工作树；验证后自动切换并重启。", "This builds ipi upstream in an isolated worktree or stages a Pi runtime package without changing the source checkout, then verifies, swaps, and restarts.");
     public string UpdateActionText => IsUpdateApplyRunning ? L("正在更新…", "Updating…") : IsUpdateCheckRunning ? L("检查中…", "Checking…") : L("一键更新", "Update now");
-    public bool CanApplyUpdate => HasUpstreamUpdate && !IsUpdateApplyRunning;
+    public bool CanApplyUpdate => HasUpstreamUpdate && !IsUpdateApplyRunning && !IsUpdateCheckRunning;
 
     private bool _isSessionInfoPopupOpen;
     public bool IsSessionInfoPopupOpen { get => _isSessionInfoPopupOpen; set { _isSessionInfoPopupOpen = value; OnPropertyChanged(); } }
@@ -954,109 +965,699 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         UpdateReasoningOptions();
         _runElapsedTimer.Tick += (_, _) => UpdateLiveStatusRow();
 
-        RefreshLocalData();
+        _ = RefreshLocalDataAsync();
         LoadHome();
         _ = CheckForAppUpdateAsync();
     }
 
-    public async Task CheckForAppUpdateAsync()
+    public void CancelActiveOperations()
     {
-        if (IsUpdateCheckRunning || IsUpdateApplyRunning) return;
-        var repoRoot = FindAppRepoRoot();
-        if (repoRoot is null)
+        if (_isDisposed) return;
+        _isDisposed = true;
+        _runElapsedTimer.Stop();
+
+        var cancellations = _liveRunsBySessionFile.Values
+            .Select(run => run.Cancellation)
+            .Append(_runCancellation)
+            .Append(_sideChatCancellation)
+            .Append(_compactionCancellation)
+            .Append(_pluginCancellation)
+            .Append(_updateCancellation)
+            .Where(cancellation => cancellation is not null)
+            .Cast<CancellationTokenSource>()
+            .Distinct()
+            .ToList();
+        foreach (var cancellation in cancellations)
         {
-            UpdateStatusText = L("未找到 Git 仓库，无法检查更新。", "No Git repository found; update check unavailable.");
-            return;
+            try { cancellation.Cancel(); }
+            catch (ObjectDisposedException) { }
         }
 
+        CancelSessionLoad();
+        foreach (var approvals in _liveRunsBySessionFile.Values
+                     .Select(run => run.Approvals)
+                     .Append(ToolApprovalRequests)
+                     .Distinct()
+                     .ToList())
+        {
+            foreach (var item in approvals.ToList())
+            {
+                item.Decision.TrySetResult(new PiToolApprovalDecision(false, "ipi is closing"));
+            }
+            approvals.Clear();
+        }
+
+        _speech.Dispose();
+    }
+
+    public void Dispose() => CancelActiveOperations();
+
+    public async Task CheckForAppUpdateAsync()
+    {
+        if (_isDisposed || Interlocked.CompareExchange(ref _updateOperationActive, 1, 0) != 0) return;
+        var updateCancellation = new CancellationTokenSource();
+        _updateCancellation = updateCancellation;
+        var cancellationToken = updateCancellation.Token;
         IsUpdateCheckRunning = true;
+        HasUpstreamUpdate = false;
         UpdateStatusText = L("正在检查上游更新…", "Checking upstream updates…");
-        UpdateDetailText = repoRoot;
+        UpdateDetailText = string.Empty;
+        _hasAppRepoUpdate = false;
+        _hasPiRuntimeUpdate = false;
+        _updateRepoRoot = null;
+        _updateUpstream = null;
+        _piRuntimePackageSpec = null;
+        _piRuntimePackageDirectory = null;
+        _piRuntimeNpmCommand = null;
+
+        var details = new List<string>();
         try
         {
-            await RunProcessAsync("git", new[] { "fetch", "--quiet" }, repoRoot);
-            var upstream = (await RunProcessAsync("git", new[] { "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}" }, repoRoot)).Trim();
-            var ahead = (await RunProcessAsync("git", new[] { "rev-list", "--count", $"HEAD..{upstream}" }, repoRoot)).Trim();
-            var count = int.TryParse(ahead, out var parsed) ? parsed : 0;
-            _updateRepoRoot = repoRoot;
-            _updateUpstream = upstream;
-            HasUpstreamUpdate = count > 0;
-            UpdateStatusText = count > 0
-                ? L($"上游有 {count} 个新提交。", $"{count} upstream commit(s) available.")
+            var repoRoot = FindAppRepoRoot();
+            if (repoRoot is not null)
+            {
+                await RunUpdateProcessAsync("git fetch", "git", new[] { "fetch", "--quiet" }, repoRoot, TimeSpan.FromMinutes(2), cancellationToken);
+                var upstream = (await RunUpdateProcessAsync("git upstream lookup", "git", new[] { "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}" }, repoRoot, TimeSpan.FromSeconds(30), cancellationToken)).Trim();
+                var upstreamCommit = (await RunUpdateProcessAsync("git upstream commit lookup", "git", new[] { "rev-parse", upstream }, repoRoot, TimeSpan.FromSeconds(30), cancellationToken)).Trim();
+                if (!IsGitCommitId(upstreamCommit)) throw new InvalidOperationException("upstream did not resolve to a full commit id");
+                var currentAppCommit = await ResolveCurrentAppSourceCommitAsync(repoRoot, cancellationToken);
+                var count = 0;
+                if (!string.Equals(currentAppCommit, upstreamCommit, StringComparison.OrdinalIgnoreCase))
+                {
+                    var mergeBase = (await RunUpdateProcessAsync(
+                        "git app update ancestry check",
+                        "git",
+                        new[] { "merge-base", currentAppCommit, upstreamCommit },
+                        repoRoot,
+                        TimeSpan.FromSeconds(30),
+                        cancellationToken)).Trim();
+                    if (!string.Equals(mergeBase, currentAppCommit, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException("the configured upstream is not a fast-forward update of the installed app; refusing to downgrade or cross a rewritten history");
+                    var ahead = (await RunUpdateProcessAsync("git update count", "git", new[] { "rev-list", "--count", $"{currentAppCommit}..{upstreamCommit}" }, repoRoot, TimeSpan.FromSeconds(30), cancellationToken)).Trim();
+                    if (!int.TryParse(ahead, out count) || count <= 0)
+                        throw new InvalidOperationException("the fast-forward app update did not contain any new commits");
+                }
+                _updateRepoRoot = repoRoot;
+                _updateUpstream = upstream;
+                _hasAppRepoUpdate = count > 0;
+                details.Add(count > 0
+                    ? L($"ipi 应用：{upstream} 有 {count} 个新提交", $"ipi app: {count} upstream commit(s) available from {upstream}")
+                    : L($"ipi 应用：已是最新 ({upstream})", $"ipi app: already current ({upstream})"));
+            }
+            else
+            {
+                details.Add(L("ipi 应用：未找到可用的 Git 上游", "ipi app: no Git upstream was found"));
+            }
+
+            var piUpdate = await CheckPiRuntimePackageUpdateAsync(cancellationToken);
+            if (piUpdate is not null)
+            {
+                _hasPiRuntimeUpdate = piUpdate.HasUpdate;
+                _piRuntimePackageSpec = piUpdate.PackageSpec;
+                _piRuntimePackageDirectory = piUpdate.WorkingDirectory;
+                _piRuntimeNpmCommand = piUpdate.NpmCommand;
+                details.Add(piUpdate.HasUpdate
+                    ? L($"Pi runtime：{piUpdate.PackageName} {piUpdate.CurrentVersion} → {piUpdate.LatestVersion}", $"Pi runtime: {piUpdate.PackageName} {piUpdate.CurrentVersion} → {piUpdate.LatestVersion}")
+                    : L($"Pi runtime：已是最新 {piUpdate.PackageName} {piUpdate.CurrentVersion}", $"Pi runtime: already current {piUpdate.PackageName} {piUpdate.CurrentVersion}"));
+            }
+            else
+            {
+                details.Add(L("Pi runtime：未找到带 ipi ownership marker 的 managed runtime；不会自动修改全局 package", "Pi runtime: no ipi-owned managed runtime found; global packages will not be modified automatically"));
+            }
+
+            HasUpstreamUpdate = _hasAppRepoUpdate || _hasPiRuntimeUpdate;
+            UpdateStatusText = HasUpstreamUpdate
+                ? L("上游有更新。", "Upstream update available.")
                 : L("当前已是最新。", "Already up to date.");
-            UpdateDetailText = string.IsNullOrWhiteSpace(upstream) ? repoRoot : $"{upstream} · {repoRoot}";
+            UpdateDetailText = string.Join(Environment.NewLine, details);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            if (!_isDisposed)
+            {
+                HasUpstreamUpdate = false;
+                UpdateStatusText = L("更新检查已取消。", "Update check cancelled.");
+                UpdateDetailText = string.Empty;
+            }
         }
         catch (Exception ex)
         {
-            HasUpstreamUpdate = false;
-            UpdateStatusText = L("检查更新失败。", "Update check failed.");
-            UpdateDetailText = ex.Message;
+            if (!_isDisposed)
+            {
+                HasUpstreamUpdate = false;
+                UpdateStatusText = L("检查更新失败。", "Update check failed.");
+                UpdateDetailText = string.Join(Environment.NewLine, details.Concat(new[] { ex.Message }));
+            }
         }
         finally
         {
-            IsUpdateCheckRunning = false;
+            if (ReferenceEquals(_updateCancellation, updateCancellation)) _updateCancellation = null;
+            updateCancellation.Dispose();
+            if (!_isDisposed) IsUpdateCheckRunning = false;
+            Interlocked.Exchange(ref _updateOperationActive, 0);
         }
     }
 
     public async Task ApplyAppUpdateAsync()
     {
-        if (!CanApplyUpdate) return;
-        var repoRoot = _updateRepoRoot ?? FindAppRepoRoot();
-        var exePath = Process.GetCurrentProcess().MainModule?.FileName;
-        if (repoRoot is null || string.IsNullOrWhiteSpace(exePath))
+        if (_isDisposed || !CanApplyUpdate || Interlocked.CompareExchange(ref _updateOperationActive, 1, 0) != 0) return;
+        var updateCancellation = new CancellationTokenSource();
+        _updateCancellation = updateCancellation;
+        var cancellationToken = updateCancellation.Token;
+        string? appStage = null;
+        string? appStageParent = null;
+        string? piStage = null;
+        string? piStageParent = null;
+        string? sourceStage = null;
+        string? sourceStageParent = null;
+        var swapStarted = false;
+        IsUpdateApplyRunning = true;
+        try
         {
-            UpdateStatusText = L("无法定位应用或仓库路径。", "Unable to locate app or repository path.");
-            return;
+            var exePath = Process.GetCurrentProcess().MainModule?.FileName;
+            if (string.IsNullOrWhiteSpace(exePath)) throw new InvalidOperationException("unable to locate the running ipi executable");
+            exePath = Path.GetFullPath(exePath);
+            var exeDirectory = Path.GetDirectoryName(exePath) ?? throw new InvalidOperationException("unable to locate the running ipi directory");
+            var exeName = Path.GetFileName(exePath);
+            if (!exeName.Equals("ipi.exe", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("transactional app update requires the packaged ipi.exe process");
+            EnsureUpdateDirectoryTreeIsSafe(exeDirectory, "app directory");
+            appStageParent = Directory.GetParent(exeDirectory)?.FullName ?? throw new InvalidOperationException("app directory has no parent for transactional update");
+            EnsureUpdateDirectoryTreeIsSafe(appStageParent, "app parent directory");
+
+            var nonce = $"{Environment.ProcessId}-{Guid.NewGuid():N}";
+            string? appBackup = null;
+            string? piBackup = null;
+            var repoRoot = _updateRepoRoot;
+            var upstream = _updateUpstream;
+            var bootstrap = new RuntimeBootstrapService();
+            string? preparedUpstreamHead = null;
+            var sourceWorktreeAdded = false;
+
+            if (_hasAppRepoUpdate)
+            {
+                if (string.IsNullOrWhiteSpace(repoRoot) || string.IsNullOrWhiteSpace(upstream))
+                    throw new InvalidOperationException("the recorded app repository or upstream is missing; check for updates again");
+                repoRoot = Path.GetFullPath(repoRoot);
+                if (PathsEqual(exeDirectory, repoRoot))
+                    throw new InvalidOperationException("the running app directory must not be the source repository root");
+                EnsureUpdateDirectoryTreeIsSafe(repoRoot, "app repository");
+                sourceStageParent = Directory.GetParent(repoRoot)?.FullName ?? throw new InvalidOperationException("app repository has no parent for a detached update worktree");
+                EnsureUpdateDirectoryTreeIsSafe(sourceStageParent, "app repository parent");
+                sourceStage = CreateRandomUpdateSibling(sourceStageParent, ".ipi-source-staging-", nonce);
+
+                UpdateStatusText = L("正在验证应用上游…", "Verifying the app upstream…");
+                var currentUpstream = (await RunUpdateProcessAsync("git upstream verification", "git", new[] { "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}" }, repoRoot, TimeSpan.FromSeconds(30), cancellationToken)).Trim();
+                if (!currentUpstream.Equals(upstream, StringComparison.Ordinal)) throw new InvalidOperationException("the configured upstream changed; check for updates again");
+
+                UpdateStatusText = L("正在获取应用上游…", "Fetching the app upstream…");
+                await RunUpdateProcessAsync("git fetch", "git", new[] { "fetch", "--quiet" }, repoRoot, TimeSpan.FromMinutes(2), cancellationToken);
+                preparedUpstreamHead = (await RunUpdateProcessAsync("git fetched upstream lookup", "git", new[] { "rev-parse", upstream }, repoRoot, TimeSpan.FromSeconds(30), cancellationToken)).Trim();
+                if (!IsGitCommitId(preparedUpstreamHead))
+                    throw new InvalidOperationException("unable to record a valid fetched upstream commit");
+                var currentAppCommit = await ResolveCurrentAppSourceCommitAsync(repoRoot, cancellationToken);
+                if (string.Equals(currentAppCommit, preparedUpstreamHead, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("the installed app is already at the fetched upstream commit; check for updates again");
+                var mergeBase = (await RunUpdateProcessAsync(
+                    "git final app update ancestry check",
+                    "git",
+                    new[] { "merge-base", currentAppCommit, preparedUpstreamHead },
+                    repoRoot,
+                    TimeSpan.FromSeconds(30),
+                    cancellationToken)).Trim();
+                if (!string.Equals(mergeBase, currentAppCommit, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("the fetched upstream is not a fast-forward update of the installed app; refusing to downgrade or cross a rewritten history");
+            }
+
+            Exception? worktreeCleanupFailure = null;
+            try
+            {
+                if (_hasAppRepoUpdate)
+                {
+                    UpdateStatusText = L("正在创建隔离的上游发布工作树…", "Creating an isolated upstream publish worktree…");
+                    await RunUpdateProcessAsync("git worktree add", "git", new[] { "worktree", "add", "--detach", sourceStage!, preparedUpstreamHead! }, repoRoot!, TimeSpan.FromMinutes(2), cancellationToken);
+                    sourceWorktreeAdded = true;
+                    EnsurePreparedUpdateStage(sourceStage!, sourceStageParent!, ".ipi-source-staging-", "source worktree staging");
+                    var projectPath = Path.Combine(sourceStage!, "apps", "windows", "Ipi.Desktop", "Ipi.Desktop.csproj");
+                    if (!File.Exists(projectPath)) throw new FileNotFoundException("desktop project not found in detached upstream worktree", projectPath);
+
+                    appStage = CreateRandomUpdateSibling(appStageParent, ".ipi-app-staging-", nonce);
+                    appBackup = CreateRandomUpdateSibling(appStageParent, ".ipi-app-backup-", nonce);
+                    UpdateStatusText = L("正在发布新的 Windows 应用…", "Publishing the new Windows app…");
+                    await RunUpdateProcessAsync(
+                        "dotnet publish",
+                        "dotnet",
+                        new[] { "publish", projectPath, "-c", "Release", "-r", "win-x64", "--self-contained", "true", "-o", appStage },
+                        sourceStage!,
+                        TimeSpan.FromMinutes(15),
+                        cancellationToken);
+                    EnsurePreparedUpdateStage(appStage, appStageParent, ".ipi-app-staging-", "app staging");
+                    var stagedExecutable = Path.Combine(appStage, exeName);
+                    if (!File.Exists(stagedExecutable)) throw new InvalidOperationException($"published staging does not contain {exeName}");
+                    foreach (var requiredFile in new[] { "agent-bridge.mjs", "approval-router.mjs", "bridge-policy.mjs", "package-bridge.mjs", "ipi-apply-update.ps1" })
+                    {
+                        if (!File.Exists(Path.Combine(appStage, requiredFile)))
+                            throw new InvalidOperationException($"published staging is missing required runtime file: {requiredFile}");
+                    }
+                    var buildMarker = new Dictionary<string, string>
+                    {
+                        ["sourceCommit"] = preparedUpstreamHead!,
+                        ["executableSha256"] = await ComputeFileSha256Async(stagedExecutable, cancellationToken),
+                        ["createdAt"] = DateTimeOffset.UtcNow.ToString("O"),
+                    };
+                    await File.WriteAllTextAsync(
+                        Path.Combine(appStage, "ipi.build.json"),
+                        JsonSerializer.Serialize(buildMarker, new JsonSerializerOptions { WriteIndented = true }),
+                        Encoding.UTF8,
+                        cancellationToken);
+                    EnsureUpdateTreeContainsNoReparsePoints(appStage);
+                }
+
+                if (_hasPiRuntimeUpdate)
+                {
+                    if (!TryParseExactPiPackageSpec(_piRuntimePackageSpec, out var packageName, out var expectedVersion)
+                        || !PathsEqual(_piRuntimePackageDirectory, bootstrap.ManagedPiRuntimeDir)
+                        || !PathsEqual(_piRuntimeNpmCommand, bootstrap.ManagedNpmCmd)
+                        || !bootstrap.IsManagedPiRuntimeOwned(_pi.RuntimeInfo.PiCodingAgentRoot))
+                    {
+                        throw new InvalidOperationException("the recorded ipi-owned Pi runtime update is no longer valid");
+                    }
+                    if (!File.Exists(bootstrap.ManagedNpmCmd)) throw new FileNotFoundException("managed npm command is missing", bootstrap.ManagedNpmCmd);
+                    piStageParent = Path.GetFullPath(bootstrap.ManagedRuntimeDir);
+                    EnsureUpdateDirectoryTreeIsSafe(piStageParent, "managed runtime root");
+                    EnsureUpdateDirectoryTreeIsSafe(bootstrap.ManagedPiRuntimeDir, "managed Pi root");
+                    piStage = CreateRandomUpdateSibling(piStageParent, ".ipi-pi-staging-", nonce);
+                    piBackup = CreateRandomUpdateSibling(piStageParent, ".ipi-pi-backup-", nonce);
+                    Directory.CreateDirectory(piStage);
+                    EnsurePreparedUpdateStage(piStage, piStageParent, ".ipi-pi-staging-", "Pi staging");
+
+                    var manifest = new Dictionary<string, object?>
+                    {
+                        ["name"] = "ipi-managed-pi-runtime",
+                        ["version"] = "0.0.0",
+                        ["private"] = true,
+                        ["dependencies"] = new Dictionary<string, string> { [packageName] = expectedVersion },
+                    };
+                    await File.WriteAllTextAsync(
+                        Path.Combine(piStage, "package.json"),
+                        JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }),
+                        Encoding.UTF8,
+                        cancellationToken);
+
+                    UpdateStatusText = L("正在准备新的 managed Pi runtime…", "Preparing the new managed Pi runtime…");
+                    await RunUpdateProcessAsync(
+                        "managed npm install",
+                        bootstrap.ManagedNpmCmd,
+                        new[] { "install", "--ignore-scripts", "--no-audit", "--no-fund", "--save-exact", "--package-lock=false", _piRuntimePackageSpec! },
+                        piStage,
+                        TimeSpan.FromMinutes(10),
+                        cancellationToken);
+                    ValidatePreparedPiStage(piStage, packageName, expectedVersion);
+                    EnsureUpdateTreeContainsNoReparsePoints(piStage);
+                }
+            }
+            finally
+            {
+                if (sourceWorktreeAdded && !string.IsNullOrWhiteSpace(sourceStage) && !string.IsNullOrWhiteSpace(repoRoot))
+                {
+                    try
+                    {
+                        await RunUpdateProcessAsync("git worktree remove", "git", new[] { "worktree", "remove", "--force", sourceStage! }, repoRoot!, TimeSpan.FromMinutes(1), CancellationToken.None);
+                        sourceWorktreeAdded = false;
+                    }
+                    catch (Exception ex)
+                    {
+                        worktreeCleanupFailure = ex;
+                    }
+                }
+                TryDeletePreparedUpdateStage(sourceStage, sourceStageParent, ".ipi-source-staging-");
+            }
+
+            if (worktreeCleanupFailure is not null)
+                throw new InvalidOperationException("detached update worktree cleanup failed", worktreeCleanupFailure);
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var swapScriptPath = ResolveUpdateSwapScriptPath(repoRoot);
+            var logPath = Path.Combine(Path.GetTempPath(), $"ipi-update-{Environment.ProcessId}-{Guid.NewGuid():N}.log");
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = Path.GetTempPath(),
+            };
+            foreach (var argument in new[]
+                     {
+                         "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", swapScriptPath,
+                         "-ParentProcessId", Environment.ProcessId.ToString(),
+                         "-AppCurrent", exeDirectory,
+                         "-AppExecutableName", exeName,
+                         "-LogPath", logPath,
+                     }) startInfo.ArgumentList.Add(argument);
+            if (_hasAppRepoUpdate)
+            {
+                startInfo.ArgumentList.Add("-ApplyApp");
+                startInfo.ArgumentList.Add("-ExpectedAppCommit");
+                startInfo.ArgumentList.Add(preparedUpstreamHead!);
+                startInfo.ArgumentList.Add("-AppStage");
+                startInfo.ArgumentList.Add(appStage!);
+                startInfo.ArgumentList.Add("-AppBackup");
+                startInfo.ArgumentList.Add(appBackup!);
+            }
+            if (_hasPiRuntimeUpdate)
+            {
+                if (!TryParseExactPiPackageSpec(_piRuntimePackageSpec, out var expectedPiPackage, out var expectedPiVersion))
+                    throw new InvalidOperationException("the exact Pi package identity was lost before swap launch");
+                startInfo.ArgumentList.Add("-ApplyPi");
+                startInfo.ArgumentList.Add("-ManagedRuntimeRoot");
+                startInfo.ArgumentList.Add(bootstrap.ManagedRuntimeDir);
+                startInfo.ArgumentList.Add("-ExpectedPiPackage");
+                startInfo.ArgumentList.Add(expectedPiPackage);
+                startInfo.ArgumentList.Add("-ExpectedPiVersion");
+                startInfo.ArgumentList.Add(expectedPiVersion);
+                startInfo.ArgumentList.Add("-PiCurrent");
+                startInfo.ArgumentList.Add(bootstrap.ManagedPiRuntimeDir);
+                startInfo.ArgumentList.Add("-PiStage");
+                startInfo.ArgumentList.Add(piStage!);
+                startInfo.ArgumentList.Add("-PiBackup");
+                startInfo.ArgumentList.Add(piBackup!);
+            }
+
+            if (_hasAppRepoUpdate)
+            {
+                var finalUpstreamHead = (await RunUpdateProcessAsync("git final upstream verification", "git", new[] { "rev-parse", upstream! }, repoRoot!, TimeSpan.FromSeconds(30), cancellationToken)).Trim();
+                if (!string.Equals(finalUpstreamHead, preparedUpstreamHead, StringComparison.Ordinal)) throw new InvalidOperationException("the fetched upstream changed while update staging was prepared; retry the update");
+                UpdateStatusText = L("应用构建已验证，正在启动切换…", "App build verified; starting the swap…");
+            }
+
+            var swapProcess = Process.Start(startInfo) ?? throw new InvalidOperationException("failed to start the detached update swap");
+            swapProcess.Dispose();
+            swapStarted = true;
+            UpdateStatusText = L("更新已准备完成，正在安全切换并重启…", "Update prepared; safely swapping and restarting…");
+            UpdateDetailText = logPath;
+            Application.Current.Shutdown();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            if (!_isDisposed)
+            {
+                UpdateStatusText = L("更新已取消，ipi 保持运行。", "Update cancelled; ipi remains open.");
+                UpdateDetailText = string.Empty;
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!_isDisposed)
+            {
+                UpdateStatusText = L("更新准备失败，ipi 保持运行。", "Update preparation failed; ipi remains open.");
+                UpdateDetailText = ex.Message;
+            }
+        }
+        finally
+        {
+            if (!swapStarted)
+            {
+                TryDeletePreparedUpdateStage(appStage, appStageParent, ".ipi-app-staging-");
+                TryDeletePreparedUpdateStage(piStage, piStageParent, ".ipi-pi-staging-");
+                TryDeletePreparedUpdateStage(sourceStage, sourceStageParent, ".ipi-source-staging-");
+            }
+            if (ReferenceEquals(_updateCancellation, updateCancellation)) _updateCancellation = null;
+            updateCancellation.Dispose();
+            if (!_isDisposed) IsUpdateApplyRunning = false;
+            Interlocked.Exchange(ref _updateOperationActive, 0);
+        }
+    }
+
+    private async Task<PiRuntimePackageUpdate?> CheckPiRuntimePackageUpdateAsync(CancellationToken cancellationToken)
+    {
+        var runtimeRoot = _pi.RuntimeInfo.PiCodingAgentRoot;
+        if (string.IsNullOrWhiteSpace(runtimeRoot)) return null;
+        var bootstrap = new RuntimeBootstrapService();
+        if (!bootstrap.IsManagedPiRuntimeOwned(runtimeRoot)) return null;
+        if (!File.Exists(bootstrap.ManagedNpmCmd)) return null;
+
+        var currentAgent = ReadPackageVersion(runtimeRoot);
+        var latestAgent = await QueryNpmPackageVersionAsync(
+            "@earendil-works/pi-coding-agent",
+            bootstrap.ManagedNpmCmd,
+            bootstrap.ManagedPiRuntimeDir,
+            cancellationToken);
+        if (string.IsNullOrWhiteSpace(currentAgent) || string.IsNullOrWhiteSpace(latestAgent)) return null;
+        return new PiRuntimePackageUpdate(
+            "@earendil-works/pi-coding-agent",
+            $"@earendil-works/pi-coding-agent@{latestAgent}",
+            bootstrap.ManagedPiRuntimeDir,
+            bootstrap.ManagedNpmCmd,
+            currentAgent,
+            latestAgent,
+            IsPackageVersionNewer(latestAgent, currentAgent));
+    }
+
+    private static bool IsGitCommitId(string? value)
+        => !string.IsNullOrWhiteSpace(value)
+           && Regex.IsMatch(value, "^[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?$", RegexOptions.CultureInvariant);
+
+    private static async Task<string> ResolveCurrentAppSourceCommitAsync(string repoRoot, CancellationToken cancellationToken)
+    {
+        var executablePath = Process.GetCurrentProcess().MainModule?.FileName;
+        var markerPath = Path.Combine(AppContext.BaseDirectory, "ipi.build.json");
+        var isPackagedExecutable = !string.IsNullOrWhiteSpace(executablePath)
+                                   && Path.GetFileName(executablePath).Equals("ipi.exe", StringComparison.OrdinalIgnoreCase);
+        var markerIsPresent = false;
+        if (isPackagedExecutable)
+        {
+            try
+            {
+                var attributes = File.GetAttributes(markerPath);
+                if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+                    throw new InvalidDataException("the installed app build marker must be a regular file");
+                markerIsPresent = true;
+            }
+            catch (FileNotFoundException) { }
+            catch (DirectoryNotFoundException) { }
+        }
+        if (markerIsPresent)
+        {
+            try
+            {
+                if (new FileInfo(markerPath).Length > 64 * 1024)
+                    throw new InvalidDataException("the installed app build marker is too large");
+                using var marker = JsonDocument.Parse(await File.ReadAllTextAsync(markerPath, cancellationToken));
+                var sourceCommit = marker.RootElement.TryGetProperty("sourceCommit", out var sourceValue) ? sourceValue.GetString() ?? "" : "";
+                var expectedHash = marker.RootElement.TryGetProperty("executableSha256", out var hashValue) ? hashValue.GetString() ?? "" : "";
+                if (!IsGitCommitId(sourceCommit))
+                    throw new InvalidDataException("the installed app build marker has an invalid source commit");
+                if (!Regex.IsMatch(expectedHash, "^[0-9a-fA-F]{64}$", RegexOptions.CultureInvariant))
+                    throw new InvalidDataException("the installed app build marker has an invalid executable hash");
+                if (!string.Equals(await ComputeFileSha256Async(executablePath!, cancellationToken), expectedHash, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("the running app executable does not match its build marker");
+                await RunUpdateProcessAsync("git app build marker verification", "git", new[] { "cat-file", "-e", $"{sourceCommit}^{{commit}}" }, repoRoot, TimeSpan.FromSeconds(30), cancellationToken);
+                return sourceCommit;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException("the installed app build marker failed validation; refusing to infer its version from the source checkout", ex);
+            }
         }
 
-        IsUpdateApplyRunning = true;
-        UpdateStatusText = L("正在启动更新器，ipi 将自动重启…", "Starting updater; ipi will restart automatically…");
-        UpdateDetailText = L("请等待窗口关闭并重新打开。", "Wait for the window to close and reopen.");
-        await Task.Delay(200);
-
-        var scriptPath = Path.Combine(Path.GetTempPath(), $"ipi-update-{Environment.ProcessId}.ps1");
-        var projectPath = Path.Combine(repoRoot, "apps", "windows", "Ipi.Desktop", "Ipi.Desktop.csproj");
-        var logPath = Path.Combine(Path.GetTempPath(), $"ipi-update-{Environment.ProcessId}.log");
-        var script = $$"""
-$ErrorActionPreference = 'Stop'
-$pidToWait = {{Environment.ProcessId}}
-$repo = {{PowerShellQuote(repoRoot)}}
-$project = {{PowerShellQuote(projectPath)}}
-$exe = {{PowerShellQuote(exePath)}}
-$log = {{PowerShellQuote(logPath)}}
-Start-Sleep -Milliseconds 500
-try { Wait-Process -Id $pidToWait -Timeout 45 -ErrorAction SilentlyContinue } catch {}
-Set-Location $repo
-"[$(Get-Date -Format o)] git pull --ff-only" | Out-File -FilePath $log -Encoding utf8
-& git pull --ff-only 2>&1 | Tee-Object -FilePath $log -Append
-"[$(Get-Date -Format o)] dotnet publish" | Tee-Object -FilePath $log -Append
-& dotnet publish $project -c Release -r win-x64 --self-contained false 2>&1 | Tee-Object -FilePath $log -Append
-Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
-""";
-        await File.WriteAllTextAsync(scriptPath, script, Encoding.UTF8);
-        Process.Start(new ProcessStartInfo
-        {
-            FileName = "powershell.exe",
-            UseShellExecute = true,
-            Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{scriptPath}\"",
-            WorkingDirectory = repoRoot,
-        });
-        Application.Current.Shutdown();
+        // Legacy builds did not carry a marker. They can migrate once using the checkout HEAD;
+        // after the first transactional update, any present marker must validate above.
+        var head = (await RunUpdateProcessAsync("git current app source lookup", "git", new[] { "rev-parse", "HEAD" }, repoRoot, TimeSpan.FromSeconds(30), cancellationToken)).Trim();
+        if (!IsGitCommitId(head)) throw new InvalidOperationException("the app source checkout did not resolve to a full commit id");
+        return head;
     }
+
+    private static async Task<string> ComputeFileSha256Async(string path, CancellationToken cancellationToken)
+    {
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        return Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken)).ToLowerInvariant();
+    }
+
+    private static string ReadPackageVersion(string packageRoot)
+    {
+        try
+        {
+            var packageJsonPath = Path.Combine(packageRoot, "package.json");
+            if (!File.Exists(packageJsonPath)) return string.Empty;
+            using var doc = JsonDocument.Parse(File.ReadAllText(packageJsonPath));
+            return doc.RootElement.TryGetProperty("version", out var version) && version.ValueKind == JsonValueKind.String ? version.GetString() ?? string.Empty : string.Empty;
+        }
+        catch { return string.Empty; }
+    }
+
+    private static async Task<string> QueryNpmPackageVersionAsync(string packageName, string npmCommand, string workingDirectory, CancellationToken cancellationToken)
+        => (await RunUpdateProcessAsync("npm version lookup", npmCommand, new[] { "view", packageName, "version" }, workingDirectory, TimeSpan.FromMinutes(1), cancellationToken)).Trim();
+
+    private static bool IsPackageVersionNewer(string latest, string current)
+    {
+        if (Version.TryParse(latest, out var latestVersion) && Version.TryParse(current, out var currentVersion)) return latestVersion > currentVersion;
+        return !latest.Equals(current, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsExactPiPackageSpec(string? packageSpec)
+        => !string.IsNullOrWhiteSpace(packageSpec)
+           && Regex.IsMatch(packageSpec, "^@earendil-works/pi-coding-agent@[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$", RegexOptions.CultureInvariant);
+
+    private static bool TryParseExactPiPackageSpec(string? packageSpec, out string packageName, out string version)
+    {
+        packageName = "@earendil-works/pi-coding-agent";
+        version = string.Empty;
+        if (!IsExactPiPackageSpec(packageSpec)) return false;
+        version = packageSpec![(packageName.Length + 1)..];
+        return !string.IsNullOrWhiteSpace(version);
+    }
+
+    private static string CreateRandomUpdateSibling(string expectedParent, string requiredPrefix, string nonce)
+    {
+        var parent = Path.GetFullPath(expectedParent);
+        EnsureUpdateDirectoryTreeIsSafe(parent, "update staging parent");
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            var suffix = attempt == 0 ? nonce : $"{nonce}-{Guid.NewGuid():N}";
+            var candidate = Path.Combine(parent, requiredPrefix + suffix);
+            if (!Directory.Exists(candidate) && !File.Exists(candidate) && IsSafeUpdateSiblingPath(candidate, parent, requiredPrefix)) return candidate;
+        }
+        throw new IOException($"unable to allocate a unique update path under {parent}");
+    }
+
+    private static bool IsSafeUpdateSiblingPath(string candidate, string expectedParent, string requiredPrefix)
+    {
+        try
+        {
+            var candidateFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(candidate));
+            var parentFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(expectedParent));
+            return PathsEqual(Path.GetDirectoryName(candidateFull), parentFull)
+                   && Path.GetFileName(candidateFull).StartsWith(requiredPrefix, StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
+    }
+
+    private static void EnsureUpdateDirectoryTreeIsSafe(string path, string label)
+    {
+        var fullPath = Path.GetFullPath(path);
+        if (!Directory.Exists(fullPath)) throw new DirectoryNotFoundException($"{label} is missing: {fullPath}");
+        for (var current = new DirectoryInfo(fullPath); current is not null; current = current.Parent)
+        {
+            if ((current.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidOperationException($"{label} contains a reparse-point ancestor: {current.FullName}");
+        }
+    }
+
+    private static void EnsurePreparedUpdateStage(string stage, string expectedParent, string requiredPrefix, string label)
+    {
+        if (!IsSafeUpdateSiblingPath(stage, expectedParent, requiredPrefix))
+            throw new InvalidOperationException($"unsafe {label} path: {stage}");
+        EnsureUpdateDirectoryTreeIsSafe(stage, label);
+    }
+
+    private static void EnsureUpdateTreeContainsNoReparsePoints(string root)
+    {
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            var current = pending.Pop();
+            if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidOperationException($"update tree contains a reparse point: {current}");
+            foreach (var entry in Directory.EnumerateFileSystemEntries(current))
+            {
+                var attributes = File.GetAttributes(entry);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidOperationException($"update tree contains a reparse point: {entry}");
+                if ((attributes & FileAttributes.Directory) != 0) pending.Push(entry);
+            }
+        }
+    }
+
+    private static void TryDeletePreparedUpdateStage(string? stage, string? expectedParent, string requiredPrefix)
+    {
+        if (string.IsNullOrWhiteSpace(stage) || string.IsNullOrWhiteSpace(expectedParent) || !Directory.Exists(stage)) return;
+        try
+        {
+            if (!IsSafeUpdateSiblingPath(stage, expectedParent, requiredPrefix)) return;
+            EnsureUpdateDirectoryTreeIsSafe(stage, "update cleanup staging");
+            EnsureUpdateTreeContainsNoReparsePoints(stage);
+            Directory.Delete(stage, recursive: true);
+        }
+        catch
+        {
+            // Preserve an unexpected or unsafe staging tree for manual review rather than traversing it.
+        }
+    }
+
+    private static void ValidatePreparedPiStage(string stage, string packageName, string expectedVersion)
+    {
+        var manifestPath = Path.Combine(stage, "package.json");
+        var packageRoot = Path.Combine(stage, "node_modules", "@earendil-works", "pi-coding-agent");
+        var installedManifestPath = Path.Combine(packageRoot, "package.json");
+        if (!File.Exists(manifestPath) || !File.Exists(installedManifestPath))
+            throw new InvalidOperationException("managed Pi staging is missing package metadata");
+
+        using (var manifest = JsonDocument.Parse(File.ReadAllText(manifestPath)))
+        {
+            var root = manifest.RootElement;
+            if (!root.TryGetProperty("name", out var name) || name.GetString() != "ipi-managed-pi-runtime")
+                throw new InvalidOperationException("managed Pi staging package.json has an invalid ipi marker");
+            if (!root.TryGetProperty("private", out var privateValue) || privateValue.ValueKind != JsonValueKind.True)
+                throw new InvalidOperationException("managed Pi staging package.json must be private");
+            if (!root.TryGetProperty("dependencies", out var dependencies)
+                || !dependencies.TryGetProperty(packageName, out var dependencyVersion)
+                || !string.Equals(dependencyVersion.GetString(), expectedVersion, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("managed Pi staging package.json does not pin the expected package version");
+            }
+        }
+
+        using (var installedManifest = JsonDocument.Parse(File.ReadAllText(installedManifestPath)))
+        {
+            var root = installedManifest.RootElement;
+            if (!root.TryGetProperty("name", out var name) || !string.Equals(name.GetString(), packageName, StringComparison.Ordinal)
+                || !root.TryGetProperty("version", out var version) || !string.Equals(version.GetString(), expectedVersion, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("installed Pi package identity/version does not match the requested exact package");
+            }
+        }
+
+        if (!File.Exists(Path.Combine(packageRoot, "dist", "index.js")))
+            throw new InvalidOperationException("installed Pi package is missing dist/index.js");
+    }
+
+    private static string ResolveUpdateSwapScriptPath(string? repoRoot)
+    {
+        var candidates = new List<string> { Path.Combine(AppContext.BaseDirectory, "ipi-apply-update.ps1") };
+        if (!string.IsNullOrWhiteSpace(repoRoot))
+            candidates.Add(Path.Combine(repoRoot, "apps", "windows", "Ipi.Desktop", "ipi-apply-update.ps1"));
+        var match = candidates.Select(Path.GetFullPath).FirstOrDefault(File.Exists);
+        return match ?? throw new FileNotFoundException("ipi update swap script is missing");
+    }
+
+    private sealed record PiRuntimePackageUpdate(string PackageName, string PackageSpec, string WorkingDirectory, string NpmCommand, string CurrentVersion, string LatestVersion, bool HasUpdate);
 
     private static string? FindAppRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null)
         {
-            if (Directory.Exists(Path.Combine(dir.FullName, ".git"))) return dir.FullName;
+            var gitEntry = Path.Combine(dir.FullName, ".git");
+            if (Directory.Exists(gitEntry) || File.Exists(gitEntry)) return dir.FullName;
             dir = dir.Parent;
         }
         return null;
     }
 
-    private static async Task<string> RunProcessAsync(string fileName, IEnumerable<string> arguments, string workingDirectory)
+    private static async Task<string> RunUpdateProcessAsync(
+        string operation,
+        string fileName,
+        IEnumerable<string> arguments,
+        string workingDirectory,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var psi = new ProcessStartInfo
         {
             FileName = fileName,
@@ -1067,17 +1668,56 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
             CreateNoWindow = true,
         };
         foreach (var argument in arguments) psi.ArgumentList.Add(argument);
-        using var process = Process.Start(psi) ?? throw new InvalidOperationException($"failed to start {fileName}");
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
-        if (process.ExitCode != 0) throw new InvalidOperationException(string.IsNullOrWhiteSpace(stderr) ? stdout.Trim() : stderr.Trim());
-        return stdout;
+        var result = await RunProcessCaptureAsync(psi, timeout, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (result.TimedOut) throw new TimeoutException($"{operation} timed out after {timeout.TotalSeconds:0} seconds and its process tree was stopped");
+        if (result.ExitCode != 0)
+        {
+            var detail = string.IsNullOrWhiteSpace(result.Error) ? result.Output.Trim() : result.Error.Trim();
+            if (detail.Length > 2000) detail = detail[^2000..];
+            throw new InvalidOperationException($"{operation} failed with exit code {result.ExitCode}: {detail}");
+        }
+        return result.Output;
     }
 
-    private static string PowerShellQuote(string value) => "'" + value.Replace("'", "''") + "'";
+    private static async Task<ProcessCaptureResult> RunProcessCaptureAsync(
+        ProcessStartInfo startInfo,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var process = new Process { StartInfo = startInfo };
+        if (!process.Start()) throw new InvalidOperationException($"failed to start {startInfo.FileName}");
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        var timedOut = false;
+        var externallyCancelled = false;
+        using var timeoutCancellation = new CancellationTokenSource(timeout);
+        using var combinedCancellation = CancellationTokenSource.CreateLinkedTokenSource(timeoutCancellation.Token, cancellationToken);
+        try
+        {
+            await process.WaitForExitAsync(combinedCancellation.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (combinedCancellation.IsCancellationRequested)
+        {
+            externallyCancelled = cancellationToken.IsCancellationRequested;
+            timedOut = !externallyCancelled && timeoutCancellation.IsCancellationRequested;
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+            catch { }
+            try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); }
+            catch { }
+        }
+
+        var output = string.Empty;
+        var error = string.Empty;
+        try { output = await stdoutTask.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
+        catch { }
+        try { error = await stderrTask.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
+        catch { }
+        if (externallyCancelled) throw new OperationCanceledException(cancellationToken);
+        var exitCode = !timedOut && process.HasExited ? process.ExitCode : -1;
+        return new ProcessCaptureResult(exitCode, output, error, timedOut);
+    }
 
     private void SetSystemContextMode(bool enabled)
     {
@@ -1270,17 +1910,51 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
 
     public void RefreshLocalData()
     {
+        ++_localDataRefreshVersion;
+        ApplyLocalDataSnapshot(ReadLocalDataSnapshot(ProjectPath));
+    }
+
+    private async Task RefreshLocalDataAsync()
+    {
+        var version = ++_localDataRefreshVersion;
+        var projectPath = ProjectPath;
+        try
+        {
+            var snapshot = await Task.Run(() => ReadLocalDataSnapshot(projectPath));
+            if (_isDisposed || version != _localDataRefreshVersion || !PathsEqual(projectPath, ProjectPath)) return;
+            ApplyLocalDataSnapshot(snapshot);
+        }
+        catch (Exception ex)
+        {
+            if (!_isDisposed && version == _localDataRefreshVersion) StatusText = $"local data refresh failed · {ex.Message}";
+        }
+    }
+
+    private LocalDataSnapshot ReadLocalDataSnapshot(string projectPath)
+    {
         var archivedPaths = _archive.ArchivedSessionPaths();
-        _sessions = _pi.ListSessions(180)
+        var sessions = _pi.ListSessions(180)
             .Where(session => !archivedPaths.Contains(NormalizePath(session.FilePath)))
             .OrderByDescending(session => session.Modified)
             .Take(140)
             .ToList();
-        _files = _pi.ListWorkspaceFiles(ProjectPath, 1800).ToList();
-        _skillSources = _pi.ListSkillSources().ToList();
-        _skills = _pi.ListSkills(260).ToList();
-        _packages = _pi.ListPackages().ToList();
-        var settings = _pi.ReadSettingsSummary();
+        return new LocalDataSnapshot(
+            sessions,
+            _pi.ListWorkspaceFiles(projectPath, 1800).ToList(),
+            _pi.ListSkillSources().ToList(),
+            _pi.ListSkills(260).ToList(),
+            _pi.ListPackages().ToList(),
+            _pi.ReadSettingsSummary());
+    }
+
+    private void ApplyLocalDataSnapshot(LocalDataSnapshot snapshot)
+    {
+        _sessions = snapshot.Sessions;
+        _files = snapshot.Files;
+        _skillSources = snapshot.SkillSources;
+        _skills = snapshot.Skills;
+        _packages = snapshot.Packages;
+        var settings = snapshot.Settings;
         if (!_modelSelectionInitialized || string.IsNullOrWhiteSpace(_activeModel) || _activeModel == "unknown")
         {
             ThinkingLevel = NormalizeThinking(settings.DefaultThinking);
@@ -1306,9 +1980,11 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
 
     public async void SendPrompt()
     {
+        if (_isDisposed) return;
         if (IsAgentRunning)
         {
-            CurrentVisibleRun()?.Cancellation?.Cancel();
+            if (_compactionCancellation is not null) _compactionCancellation.Cancel();
+            else CurrentVisibleRun()?.Cancellation?.Cancel();
             StatusText = "stopping current session run";
             return;
         }
@@ -1327,6 +2003,13 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         {
             PromptText = string.Empty;
             RunSearch(text);
+            return;
+        }
+
+        var modelPreflight = await ValidateSelectedModelAsync();
+        if (!modelPreflight.Ready)
+        {
+            StatusText = modelPreflight.Message;
             return;
         }
 
@@ -1366,12 +2049,12 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         var runViewVersion = _viewVersion;
         var runRows = ContentRows;
         var runApprovals = ToolApprovalRequests;
+        var runApprovalState = new RunApprovalState();
         _visibleRunVersion = runVersion;
         var runCancellation = new CancellationTokenSource();
         IsAgentRunning = true;
         _runStartedAt = DateTime.Now;
         _runElapsedTimer.Start();
-        _runAllowedTools.Clear();
         _runCancellation = runCancellation;
         IsChatMode = true;
         IsStartActionsVisible = false;
@@ -1402,7 +2085,7 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         {
             var runCwd = ResolveRunCwd();
             ClearPendingEditFromHere(false);
-            var result = await _agentBridge.RunPromptAsync(runCwd, _pi.AgentDir, agentMessage, evt => AddBridgeEvent(runVersion, runViewVersion, runRows, runApprovals, evt), sessionFileForRun, ThinkingLevel, toolConfig.Tools, toolConfig.NoTools, request => RequestToolApprovalAsync(runVersion, runViewVersion, runApprovals, request), ApprovalModeKey(), ApprovalRulesForBridge(), branchFromEntryId: branchFromEntryId, provider: _activeProvider, model: _activeModel, cancellationToken: runCancellation.Token);
+            var result = await _agentBridge.RunPromptAsync(runCwd, _pi.AgentDir, agentMessage, evt => AddBridgeEvent(runVersion, runViewVersion, runRows, runApprovals, runCancellation, evt), sessionFileForRun, ThinkingLevel, toolConfig.Tools, toolConfig.NoTools, request => RequestToolApprovalAsync(runVersion, runViewVersion, runApprovals, runApprovalState, request), ApprovalModeKey(), ApprovalRulesForBridge(), branchFromEntryId: branchFromEntryId, provider: _activeProvider, model: _activeModel, cancellationToken: runCancellation.Token);
             await SwitchToUiAsync();
             var runStillVisible = IsRunRowsVisible(runVersion, runViewVersion, runRows);
             RemoveLiveStatusRows(runRows, clearVisibleStatus: runStillVisible);
@@ -1422,7 +2105,7 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
                 StatusText = string.IsNullOrWhiteSpace(result.SessionId) ? "agent finished" : $"agent finished · {result.SessionId}";
                 SessionStatsText = L("就绪", "Ready");
             }
-            RefreshLocalData();
+            await RefreshLocalDataAsync();
             if (runStillVisible && !string.IsNullOrWhiteSpace(_activeSessionFile) && File.Exists(_activeSessionFile))
             {
                 SetTopUsage(_pi.ReadSessionUsageSummary(_activeSessionFile));
@@ -2573,11 +3256,11 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         }
 
         ApprovalOptions.Clear();
-        ApprovalOptions.Add(new("shield-check", ApprovalLabelFor(0), L("编辑、Shell、工作区外读取时询问", "Ask before edits, shell, and outside-workspace reads"), _approvalModeIndex == 0 ? "✓" : ""));
-        ApprovalOptions.Add(new("sparkles", ApprovalLabelFor(1), L("Shell 总是询问；工作区内编辑自动允许", "Ask for shell; auto-allow in-workspace edits"), _approvalModeIndex == 1 ? "✓" : ""));
+        ApprovalOptions.Add(new("shield-check", ApprovalLabelFor(0), L("编辑、Shell、敏感路径、批量搜索或工作区外读取时询问", "Ask before edits, shell, sensitive paths, bulk search, or outside-workspace reads"), _approvalModeIndex == 0 ? "✓" : ""));
+        ApprovalOptions.Add(new("sparkles", ApprovalLabelFor(1), L("工作区内编辑可自动允许；Shell、敏感路径和批量搜索仍询问", "Auto-allow in-workspace edits; still ask for shell, sensitive paths, and bulk search"), _approvalModeIndex == 1 ? "✓" : ""));
         ApprovalOptions.Add(new("globe", ApprovalLabelFor(2), L("不弹出工具审批；仍受工具/系统限制", "No tool approval prompts; still limited by tools/system"), _approvalModeIndex == 2 ? "✓" : ""));
         ApprovalOptions.Add(new("settings", ApprovalLabelFor(3), customConfig.ModeKey is null
-            ? L("点击选择规则并创建 .ipi/config.toml", "Click to choose a policy and create .ipi/config.toml")
+            ? L("点击选择规则并创建用户级审批配置", "Click to choose a policy and create a user-level approval config")
             : L($"读取 {ShortenPath(customConfig.Path!)} · {customConfig.Display}", $"Read {ShortenPath(customConfig.Path!)} · {customConfig.Display}"), _approvalModeIndex == 3 ? "✓" : "", true, customConfig.ModeKey is null));
     }
 
@@ -2585,7 +3268,7 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
     {
         try
         {
-            var path = Path.Combine(ResolveRunCwd(), ".ipi", "config.toml");
+            var path = Path.Combine(_pi.AgentDir, "config.toml");
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             var template = BuildApprovalConfigTemplate(rules);
             if (!File.Exists(path))
@@ -2596,7 +3279,7 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
             }
 
             var existing = File.ReadAllText(path);
-            if (!ContainsApprovalRules(existing) && !existing.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Any(line => IsApprovalConfigKey(line.Split('#')[0].Split('=', 2)[0].Trim().Trim('"', '\''))))
+            if (!ContainsApprovalSection(existing))
             {
                 File.AppendAllText(path, "\n" + template);
                 SelectCustomApprovalFromCreatedConfig(path);
@@ -2614,7 +3297,7 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
     private static string BuildApprovalConfigTemplate(IReadOnlyDictionary<string, string> rules)
     {
         string Value(string key) => NormalizeApprovalRuleValue(rules.TryGetValue(key, out var value) ? value : "ask");
-        return "# ipi workspace approval rules\n" +
+        return "# ipi user approval rules\n" +
                "# Values per tool: ask | allow\n" +
                "[approval]\n" +
                $"bash = \"{Value("bash")}\"\n" +
@@ -2636,14 +3319,6 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         StatusText = L($"自定义审批策略已启用 · {ShortenPath(path)}", $"custom approval policy enabled · {ShortenPath(path)}");
     }
 
-    private static bool IsApprovalConfigKey(string key)
-    {
-        return key.Equals("approval_mode", StringComparison.OrdinalIgnoreCase) ||
-               key.Equals("approvalMode", StringComparison.OrdinalIgnoreCase) ||
-               key.Equals("approval_policy", StringComparison.OrdinalIgnoreCase) ||
-               key.Equals("approval-policy", StringComparison.OrdinalIgnoreCase);
-    }
-
     private static bool IsApprovalRuleKey(string key)
     {
         return key.Equals("bash", StringComparison.OrdinalIgnoreCase) ||
@@ -2655,20 +3330,72 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
 
     private static string NormalizeApprovalRuleValue(string value)
     {
-        return value.Equals("allow", StringComparison.OrdinalIgnoreCase) ||
-               value.Equals("auto", StringComparison.OrdinalIgnoreCase) ||
-               value.Equals("never", StringComparison.OrdinalIgnoreCase)
-            ? "allow"
-            : "ask";
+        var token = value.Trim();
+        if (token.Length >= 2 && ((token[0] == '"' && token[^1] == '"') || (token[0] == '\'' && token[^1] == '\'')))
+        {
+            token = token[1..^1];
+        }
+        return token.Equals("allow", StringComparison.OrdinalIgnoreCase) ? "allow" : "ask";
     }
 
-    private static bool ContainsApprovalRules(string text)
+    internal static bool ContainsApprovalSection(string text)
     {
-        return text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => line.Split('#')[0].Trim())
-            .Where(line => line.Contains('='))
-            .Select(line => line.Split('=', 2)[0].Trim().Trim('"', '\''))
-            .Any(IsApprovalRuleKey);
+        return text.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None)
+            .Select(StripTomlComment)
+            .Any(line => line.Trim().Equals("[approval]", StringComparison.OrdinalIgnoreCase));
+    }
+
+    internal static IReadOnlyDictionary<string, string> ParseIpiApprovalRules(string text)
+    {
+        var rules = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var inApprovalSection = false;
+        foreach (var raw in text.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None).Take(260))
+        {
+            var line = StripTomlComment(raw).Trim();
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            if (line.StartsWith("[") && line.EndsWith("]"))
+            {
+                inApprovalSection = line.Equals("[approval]", StringComparison.OrdinalIgnoreCase);
+                continue;
+            }
+            if (!inApprovalSection || !line.Contains('=')) continue;
+
+            var parts = line.Split('=', 2);
+            var key = parts[0].Trim().Trim('"', '\'');
+            if (!IsApprovalRuleKey(key)) continue;
+            var normalizedKey = key.Equals("readOutsideWorkspace", StringComparison.OrdinalIgnoreCase)
+                ? "read_outside_workspace"
+                : key.ToLowerInvariant();
+            rules[normalizedKey] = NormalizeApprovalRuleValue(parts[1]);
+        }
+        return rules;
+    }
+
+    private static string StripTomlComment(string raw)
+    {
+        var quote = '\0';
+        var escaped = false;
+        for (var index = 0; index < raw.Length; index++)
+        {
+            var character = raw[index];
+            if (escaped)
+            {
+                escaped = false;
+                continue;
+            }
+            if (quote == '"' && character == '\\')
+            {
+                escaped = true;
+                continue;
+            }
+            if (character is '"' or '\'')
+            {
+                quote = quote == '\0' ? character : quote == character ? '\0' : quote;
+                continue;
+            }
+            if (character == '#' && quote == '\0') return raw[..index];
+        }
+        return raw;
     }
 
     private (string? Path, string? ModeKey, string Display) ReadCustomApprovalModeFromConfig()
@@ -2679,76 +3406,19 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
             var display = string.Join(" · ", granular.Rules.Select(kv => $"{kv.Key}={kv.Value}"));
             return (granular.Path, "custom-rules", display);
         }
-        foreach (var path in ApprovalConfigCandidates())
-        {
-            if (!File.Exists(path)) continue;
-            try
-            {
-                foreach (var raw in File.ReadLines(path).Take(220))
-                {
-                    var line = raw.Split('#')[0].Trim();
-                    if (string.IsNullOrWhiteSpace(line) || !line.Contains('=')) continue;
-                    var parts = line.Split('=', 2);
-                    var key = parts[0].Trim().Trim('"', '\'');
-                    if (!IsApprovalConfigKey(key)) continue;
-                    var value = parts[1].Trim().Trim('"', '\'').ToLowerInvariant();
-                    var mapped = value switch
-                    {
-                        "default" or "ask" or "on-request" or "on_request" => "default",
-                        "on-risk" or "on_risk" or "risk" or "on-failure" or "on_failure" => "on-risk",
-                        "auto" or "full" or "never" => "auto",
-                        "read-only" or "read_only" => "read-only",
-                        _ => null,
-                    };
-                    if (mapped is not null) return (path, mapped, $"{key}={value} → {mapped}");
-                }
-            }
-            catch { }
-        }
         return (null, null, "");
     }
 
     private (string? Path, IReadOnlyDictionary<string, string>? Rules) ReadCustomApprovalRulesFromConfig()
     {
-        foreach (var path in ApprovalConfigCandidates())
+        var path = Path.Combine(_pi.AgentDir, "config.toml");
+        if (!File.Exists(path)) return (null, null);
+        try
         {
-            if (!File.Exists(path)) continue;
-            try
-            {
-                var rules = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                var inApprovalSection = false;
-                foreach (var raw in File.ReadLines(path).Take(260))
-                {
-                    var line = raw.Split('#')[0].Trim();
-                    if (string.IsNullOrWhiteSpace(line)) continue;
-                    if (line.StartsWith("[") && line.EndsWith("]"))
-                    {
-                        inApprovalSection = line.Equals("[approval]", StringComparison.OrdinalIgnoreCase);
-                        continue;
-                    }
-                    if (!line.Contains('=')) continue;
-                    var parts = line.Split('=', 2);
-                    var key = parts[0].Trim().Trim('"', '\'');
-                    if (!inApprovalSection && !IsApprovalRuleKey(key)) continue;
-                    if (!IsApprovalRuleKey(key)) continue;
-                    var normalizedKey = key.Equals("readOutsideWorkspace", StringComparison.OrdinalIgnoreCase) ? "read_outside_workspace" : key.ToLowerInvariant();
-                    var value = parts[1].Trim().Trim('"', '\'');
-                    rules[normalizedKey] = NormalizeApprovalRuleValue(value);
-                }
-                if (rules.Count > 0) return (path, rules);
-            }
-            catch { }
+            var rules = ParseIpiApprovalRules(File.ReadAllText(path));
+            return rules.Count > 0 ? (path, rules) : (null, null);
         }
-        return (null, null);
-    }
-
-    private IEnumerable<string> ApprovalConfigCandidates()
-    {
-        var cwd = ResolveRunCwd();
-        yield return Path.Combine(cwd, ".ipi", "config.toml");
-        yield return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "config.toml");
-        yield return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".pi", "config.toml");
-        yield return Path.Combine(_pi.AgentDir, "config.toml");
+        catch { return (null, null); }
     }
 
     private void UpdateReasoningOptions()
@@ -2760,11 +3430,21 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         ReasoningOptions.Add(new("xhigh", L("超高", "Ultra"), ThinkingLevel == "xhigh" ? "✓" : ""));
     }
 
-    private Task<PiToolApprovalDecision> RequestToolApprovalAsync(PiToolApprovalRequest request) => RequestToolApprovalAsync(_runVersion, _viewVersion, ToolApprovalRequests, request);
-
-    private Task<PiToolApprovalDecision> RequestToolApprovalAsync(int runVersion, int viewVersion, ObservableCollection<ToolApprovalRequestItem> approvals, PiToolApprovalRequest request)
+    private Task<PiToolApprovalDecision> RequestToolApprovalAsync(
+        int runVersion,
+        int viewVersion,
+        ObservableCollection<ToolApprovalRequestItem> approvals,
+        RunApprovalState approvalState,
+        PiToolApprovalRequest request)
     {
-        if (_runAllowedTools.Contains(request.ToolName)) return Task.FromResult(new PiToolApprovalDecision(true));
+        var bridgeRequestScope = request.RequestScope.Trim();
+        var requestScope = Regex.IsMatch(
+            bridgeRequestScope,
+            "^v1:[A-Za-z0-9%._~-]+:(?:command|paths|args):sha256:[0-9a-f]{64}$",
+            RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)
+            ? bridgeRequestScope.ToLowerInvariant()
+            : BuildToolApprovalRequestScope(request.ToolName, request.Summary, request.Detail, ResolveRunCwd());
+        if (approvalState.IsAllowed(requestScope)) return Task.FromResult(new PiToolApprovalDecision(true));
 
         var tcs = new TaskCompletionSource<PiToolApprovalDecision>(TaskCreationOptions.RunContinuationsAsynchronously);
         Application.Current.Dispatcher.Invoke(() =>
@@ -2776,17 +3456,84 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
                 BuildToolIntent(request.ToolName, request.Summary),
                 TrimForRow(string.IsNullOrWhiteSpace(request.Summary) ? request.Detail : request.Summary, 260),
                 request.Detail,
+                requestScope,
                 L("工具请求", "Tool request"),
                 L("允许", "Allow"),
-                L("始终允许", "Always allow"),
+                L("本轮允许相同请求", "Allow same request this run"),
                 L("拒绝", "Deny"),
                 L("可选：告诉 agent 换一种做法…", "Optional: tell the agent what to do instead…"),
+                approvalState.Allow,
                 tcs);
             approvals.Add(item);
             if (visible) StatusText = $"tool approval required · {request.ToolName}";
         });
         return tcs.Task;
     }
+
+    internal static string BuildToolApprovalRequestScope(string toolName, string summary, string detail, string baseDirectory)
+    {
+        var normalizedTool = (toolName ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalizedTool == "bash")
+        {
+            var command = ReadApprovalDetailString(detail, "command");
+            if (string.IsNullOrEmpty(command)) command = summary ?? string.Empty;
+            return $"v1\0bash\0{NormalizeApprovalText(command)}";
+        }
+
+        if (normalizedTool is "read" or "write" or "edit")
+        {
+            var requestedPath = ReadApprovalDetailString(detail, "path", "filePath");
+            if (string.IsNullOrWhiteSpace(requestedPath)) requestedPath = summary ?? string.Empty;
+            return $"v1\0{normalizedTool}\0path\0{NormalizeApprovalRequestPath(requestedPath, baseDirectory)}";
+        }
+
+        var fullDetail = string.IsNullOrWhiteSpace(detail) ? summary ?? string.Empty : detail;
+        var detailBytes = Encoding.UTF8.GetBytes(NormalizeApprovalText(fullDetail));
+        return $"v1\0{normalizedTool}\0detail-sha256\0{Convert.ToHexString(SHA256.HashData(detailBytes))}";
+    }
+
+    private static string ReadApprovalDetailString(string detail, params string[] propertyNames)
+    {
+        if (string.IsNullOrWhiteSpace(detail)) return string.Empty;
+        try
+        {
+            using var document = JsonDocument.Parse(detail);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return string.Empty;
+            foreach (var propertyName in propertyNames)
+            {
+                foreach (var property in document.RootElement.EnumerateObject())
+                {
+                    if (!property.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase)) continue;
+                    return property.Value.ValueKind == JsonValueKind.String
+                        ? property.Value.GetString() ?? string.Empty
+                        : property.Value.GetRawText();
+                }
+            }
+        }
+        catch (JsonException) { }
+        return string.Empty;
+    }
+
+    private static string NormalizeApprovalRequestPath(string requestedPath, string baseDirectory)
+    {
+        var path = requestedPath.Trim();
+        if (string.IsNullOrEmpty(path)) return "<empty>";
+        try
+        {
+            var root = string.IsNullOrWhiteSpace(baseDirectory) ? Environment.CurrentDirectory : Path.GetFullPath(baseDirectory);
+            var normalized = Path.GetFullPath(path, root);
+            normalized = Path.TrimEndingDirectorySeparator(normalized)
+                .Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+            return OperatingSystem.IsWindows() ? normalized.ToUpperInvariant() : normalized;
+        }
+        catch
+        {
+            var normalized = NormalizeApprovalText(path).Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+            return OperatingSystem.IsWindows() ? normalized.ToUpperInvariant() : normalized;
+        }
+    }
+
+    private static string NormalizeApprovalText(string value) => value.Replace("\r\n", "\n").Replace('\r', '\n');
 
     private string BuildToolIntent(string toolName, string summary)
     {
@@ -2804,7 +3551,7 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
     public void ResolveToolApproval(ToolApprovalRequestItem item, ToolApprovalDecisionKind decision)
     {
         if (ToolApprovalRequests.Contains(item)) ToolApprovalRequests.Remove(item);
-        if (decision == ToolApprovalDecisionKind.AlwaysAllow) _runAllowedTools.Add(item.ToolName);
+        if (decision == ToolApprovalDecisionKind.AlwaysAllow) item.AllowForRun();
         var approved = decision is ToolApprovalDecisionKind.Allow or ToolApprovalDecisionKind.AlwaysAllow;
         var reason = approved ? "" : item.Guidance.Trim();
         item.Decision.TrySetResult(new PiToolApprovalDecision(approved, reason));
@@ -2821,7 +3568,7 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         foreach (var item in Attachments)
         {
             sb.AppendLine($"- {item.Path}");
-            if (IsSensitiveAttachment(item.Path))
+            if (PiDataService.IsSensitiveFilePath(item.Path))
             {
                 sb.AppendLine("[content omitted: sensitive-looking file; path only]");
                 continue;
@@ -2837,16 +3584,6 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
             }
         }
         return sb.ToString();
-    }
-
-    private static bool IsSensitiveAttachment(string path)
-    {
-        var name = Path.GetFileName(path).ToLowerInvariant();
-        var ext = Path.GetExtension(path).ToLowerInvariant();
-        if (name.StartsWith(".env")) return true;
-        if (name.Contains("mnemonic") || name.Contains("seed") || name.Contains("wallet")) return true;
-        if (name is "id_rsa" or "id_dsa" or "id_ecdsa" or "id_ed25519") return true;
-        return ext is ".pem" or ".key" or ".p12" or ".pfx";
     }
 
     private void LoadHome()
@@ -3290,6 +4027,7 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
 
     public async Task AddPluginAsync()
     {
+        if (IsPluginActionRunning || _isDisposed) return;
         var source = PluginNewSource.Trim();
         if (string.IsNullOrWhiteSpace(source) || source == "npm:")
         {
@@ -3302,6 +4040,8 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
             return;
         }
 
+        var pluginCancellation = new CancellationTokenSource();
+        _pluginCancellation = pluginCancellation;
         IsPluginActionRunning = true;
         try
         {
@@ -3309,12 +4049,16 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
             {
                 var packageName = source[4..].Trim();
                 PluginActionStatus = $"npm install {packageName}";
-                await RunNpmAsync("install", packageName);
+                await RunNpmAsync("install", packageName, pluginCancellation.Token);
             }
             var added = _pi.AddPackageSource(source);
             IsPluginAddOpen = false;
             RefreshPluginsPage();
             PluginActionStatus = added ? L("插件已添加", "Plugin added") : L("插件已存在", "Plugin already exists");
+        }
+        catch (OperationCanceledException) when (pluginCancellation.IsCancellationRequested)
+        {
+            if (!_isDisposed) PluginActionStatus = L("插件安装已取消", "Plugin installation cancelled");
         }
         catch (Exception ex)
         {
@@ -3322,6 +4066,8 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         }
         finally
         {
+            if (ReferenceEquals(_pluginCancellation, pluginCancellation)) _pluginCancellation = null;
+            pluginCancellation.Dispose();
             IsPluginActionRunning = false;
         }
     }
@@ -3329,20 +4075,26 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
     public async Task UpdateSelectedPluginAsync()
     {
         var selected = _selectedPluginPackage;
-        if (selected is null) return;
+        if (selected is null || IsPluginActionRunning || _isDisposed) return;
         if (!selected.IsNpmPackage)
         {
             PluginActionStatus = L("只有 npm package 支持自动更新。", "Only npm packages can be updated automatically.");
             return;
         }
 
+        var pluginCancellation = new CancellationTokenSource();
+        _pluginCancellation = pluginCancellation;
         IsPluginActionRunning = true;
         try
         {
             PluginActionStatus = $"npm install {selected.PackageName}@latest";
-            await RunNpmAsync("install", $"{selected.PackageName}@latest");
+            await RunNpmAsync("install", $"{selected.PackageName}@latest", pluginCancellation.Token);
             RefreshPluginsPage();
             PluginActionStatus = L("插件已更新", "Plugin updated");
+        }
+        catch (OperationCanceledException) when (pluginCancellation.IsCancellationRequested)
+        {
+            if (!_isDisposed) PluginActionStatus = L("插件更新已取消", "Plugin update cancelled");
         }
         catch (Exception ex)
         {
@@ -3350,6 +4102,8 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         }
         finally
         {
+            if (ReferenceEquals(_pluginCancellation, pluginCancellation)) _pluginCancellation = null;
+            pluginCancellation.Dispose();
             IsPluginActionRunning = false;
         }
     }
@@ -3389,12 +4143,13 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
             : L("settings.json 中未找到该插件。", "Plugin was not found in settings.json.");
     }
 
-    private async Task RunNpmAsync(string command, string argument)
+    private async Task RunNpmAsync(string command, string argument, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(_pi.NpmPackagesDir);
+        var managedNpm = new RuntimeBootstrapService().ManagedNpmCmd;
         var psi = new ProcessStartInfo
         {
-            FileName = OperatingSystem.IsWindows() ? "npm.cmd" : "npm",
+            FileName = OperatingSystem.IsWindows() && File.Exists(managedNpm) ? managedNpm : OperatingSystem.IsWindows() ? "npm.cmd" : "npm",
             WorkingDirectory = _pi.NpmPackagesDir,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -3402,14 +4157,19 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
             CreateNoWindow = true,
         };
         psi.ArgumentList.Add(command);
+        psi.ArgumentList.Add("--ignore-scripts");
+        psi.ArgumentList.Add("--no-audit");
+        psi.ArgumentList.Add("--no-fund");
         psi.ArgumentList.Add(argument);
-        using var process = Process.Start(psi) ?? throw new InvalidOperationException("failed to start npm");
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        var stderr = (await stderrTask).Trim();
-        _ = await stdoutTask;
-        if (process.ExitCode != 0) throw new InvalidOperationException(string.IsNullOrWhiteSpace(stderr) ? $"npm {command} failed" : stderr);
+        psi.Environment["npm_config_ignore_scripts"] = "true";
+        var result = await RunProcessCaptureAsync(psi, TimeSpan.FromMinutes(10), cancellationToken);
+        if (result.TimedOut) throw new TimeoutException($"npm {command} timed out after 10 minutes and its process tree was stopped");
+        if (result.ExitCode != 0)
+        {
+            var detail = string.IsNullOrWhiteSpace(result.Error) ? result.Output.Trim() : result.Error.Trim();
+            if (detail.Length > 2000) detail = detail[^2000..];
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(detail) ? $"npm {command} failed" : detail);
+        }
     }
 
     private static int PluginKindOrder(string kind) => kind switch
@@ -3513,6 +4273,7 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
 
     private async void CompactCurrentSession()
     {
+        if (_isDisposed) return;
         if (string.IsNullOrWhiteSpace(_activeSessionFile) || !File.Exists(_activeSessionFile))
         {
             StatusText = "open a session before compacting";
@@ -3524,6 +4285,13 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
             return;
         }
 
+        var runVersion = ++_runVersion;
+        var viewVersion = _viewVersion;
+        var rows = ContentRows;
+        var approvals = ToolApprovalRequests;
+        var cancellation = new CancellationTokenSource();
+        _compactionCancellation = cancellation;
+        _visibleRunVersion = runVersion;
         IsAgentRunning = true;
         IsChatMode = true;
         SessionStatsText = "compacting";
@@ -3531,11 +4299,23 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         try
         {
             var runCwd = ResolveRunCwd();
-            var result = await _agentBridge.CompactAsync(runCwd, _pi.AgentDir, _activeSessionFile, AddBridgeEvent, ThinkingLevel);
+            var result = await _agentBridge.CompactAsync(
+                runCwd,
+                _pi.AgentDir,
+                _activeSessionFile,
+                evt => AddBridgeEvent(runVersion, viewVersion, rows, approvals, cancellation, evt),
+                ThinkingLevel,
+                cancellation.Token);
             ContentRows.Add(new("system", string.IsNullOrWhiteSpace(result.FinalText) ? "Context compacted" : result.FinalText, ""));
             StatusText = "context compacted";
             SessionStatsText = L("就绪", "Ready");
-            RefreshLocalData();
+            await RefreshLocalDataAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            ContentRows.Add(new("state", L("上下文压缩已停止", "Compaction stopped"), ""));
+            StatusText = "compaction stopped";
+            SessionStatsText = L("已停止", "Stopped");
         }
         catch (Exception ex)
         {
@@ -3545,6 +4325,10 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         }
         finally
         {
+            MarkLiveRunFinished(runVersion);
+            if (_visibleRunVersion == runVersion) _visibleRunVersion = null;
+            if (ReferenceEquals(_compactionCancellation, cancellation)) _compactionCancellation = null;
+            cancellation.Dispose();
             IsAgentRunning = false;
         }
     }
@@ -4729,7 +5513,7 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         SideTerminalOutput = L("正在运行…", "Running…");
         try
         {
-            var output = await Task.Run(() => RunShellForSidePanel(CurrentRunDirectory, command));
+            var output = await RunShellForSidePanelAsync(CurrentRunDirectory, command);
             SideTerminalOutput = output;
         }
         catch (Exception ex)
@@ -4742,7 +5526,7 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         }
     }
 
-    private static string RunShellForSidePanel(string cwd, string command)
+    private static async Task<string> RunShellForSidePanelAsync(string cwd, string command)
     {
         var psi = new ProcessStartInfo
         {
@@ -4758,20 +5542,13 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         psi.ArgumentList.Add("-NoProfile");
         psi.ArgumentList.Add("-Command");
         psi.ArgumentList.Add(command);
-        using var process = Process.Start(psi) ?? throw new InvalidOperationException("failed to start shell");
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit(30_000);
-        if (!process.HasExited)
-        {
-            try { process.Kill(entireProcessTree: true); } catch { }
-            return "Command timed out after 30s.";
-        }
+        var capture = await RunProcessCaptureAsync(psi, TimeSpan.FromSeconds(30));
+        if (capture.TimedOut) return "Command timed out after 30s and its process tree was stopped.";
         var result = new StringBuilder();
         result.AppendLine($"> {command}");
-        result.AppendLine($"exit {process.ExitCode}");
-        if (!string.IsNullOrWhiteSpace(stdout)) result.AppendLine(stdout.TrimEnd());
-        if (!string.IsNullOrWhiteSpace(stderr)) result.AppendLine(stderr.TrimEnd());
+        result.AppendLine($"exit {capture.ExitCode}");
+        if (!string.IsNullOrWhiteSpace(capture.Output)) result.AppendLine(capture.Output.TrimEnd());
+        if (!string.IsNullOrWhiteSpace(capture.Error)) result.AppendLine(capture.Error.TrimEnd());
         return result.ToString().TrimEnd();
     }
 
@@ -4888,7 +5665,7 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         FilePanelTitle = Path.GetFileName(path);
         FilePanelPath = relativePath;
         FilePanelStatus = File.Exists(path) ? "live" : L("缺失", "missing");
-        CanEditFilePanel = File.Exists(path) && !IsSensitivePath(path) && IsTextLikeFile(path) && new FileInfo(path).Length <= 512 * 1024;
+        CanEditFilePanel = File.Exists(path) && !PiDataService.IsSensitiveFilePath(path) && IsTextLikeFile(path) && new FileInfo(path).Length <= 512 * 1024;
         IsFilePanelRawMode = false;
         if (!File.Exists(path))
         {
@@ -4932,16 +5709,6 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
     {
         var index = key.LastIndexOf('/');
         return index <= 0 ? string.Empty : key[..index];
-    }
-
-    private static bool IsSensitivePath(string path)
-    {
-        var name = Path.GetFileName(path).ToLowerInvariant();
-        var ext = Path.GetExtension(path).ToLowerInvariant();
-        if (name.StartsWith(".env")) return true;
-        if (name.Contains("mnemonic") || name.Contains("seed") || name.Contains("wallet")) return true;
-        if (name is "id_rsa" or "id_dsa" or "id_ecdsa" or "id_ed25519") return true;
-        return ext is ".pem" or ".key" or ".p12" or ".pfx";
     }
 
     private static bool IsTextLikeFile(string path)
@@ -5108,16 +5875,22 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
         };
     }
 
-    private void AddBridgeEvent(PiBridgeEvent evt) => AddBridgeEvent(_runVersion, _viewVersion, ContentRows, ToolApprovalRequests, evt);
+    private void AddBridgeEvent(PiBridgeEvent evt) => AddBridgeEvent(_runVersion, _viewVersion, ContentRows, ToolApprovalRequests, _runCancellation, evt);
 
-    private void AddBridgeEvent(int runVersion, int viewVersion, ObservableCollection<PanelRow> rows, ObservableCollection<ToolApprovalRequestItem> approvals, PiBridgeEvent evt)
+    private void AddBridgeEvent(
+        int runVersion,
+        int viewVersion,
+        ObservableCollection<PanelRow> rows,
+        ObservableCollection<ToolApprovalRequestItem> approvals,
+        CancellationTokenSource? runCancellation,
+        PiBridgeEvent evt)
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
             var visible = IsRunRowsVisible(runVersion, viewVersion, rows);
             if (evt.EventType == "ready" && !string.IsNullOrWhiteSpace(evt.SessionFile))
             {
-                _liveRunsBySessionFile[evt.SessionFile] = new LiveRunViewState(runVersion, viewVersion, rows, approvals, _runCancellation, IsRunning: true);
+                _liveRunsBySessionFile[evt.SessionFile] = new LiveRunViewState(runVersion, viewVersion, rows, approvals, runCancellation, IsRunning: true);
                 if (visible) _activeSessionFile = evt.SessionFile;
                 LoadSidebarProjectGroups();
                 LoadSidebarSessions();
@@ -5426,16 +6199,10 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
                 CreateNoWindow = true,
             };
             foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
-            using var process = Process.Start(startInfo);
-            if (process is null) return new GitCommandResult(-1, "", "git failed to start");
-            var output = process.StandardOutput.ReadToEnd();
-            var error = process.StandardError.ReadToEnd();
-            if (!process.WaitForExit(30000))
-            {
-                try { process.Kill(entireProcessTree: true); } catch { }
-                return new GitCommandResult(-1, output, "git command timed out");
-            }
-            return new GitCommandResult(process.ExitCode, output, error);
+            var capture = RunProcessCaptureAsync(startInfo, TimeSpan.FromSeconds(30)).ConfigureAwait(false).GetAwaiter().GetResult();
+            return capture.TimedOut
+                ? new GitCommandResult(-1, capture.Output, "git command timed out after 30s and was stopped")
+                : new GitCommandResult(capture.ExitCode, capture.Output, capture.Error);
         }
         catch (Exception ex)
         {
@@ -5476,6 +6243,66 @@ Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
     }
     private static string FormatSize(long bytes) => bytes < 1024 ? $"{bytes} B" : bytes < 1024 * 1024 ? $"{bytes / 1024.0:F1} KB" : $"{bytes / 1024.0 / 1024.0:F1} MB";
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+
+    private sealed record LocalDataSnapshot(
+        List<PiSessionRecord> Sessions,
+        List<WorkspaceFileRecord> Files,
+        List<SkillSourceRecord> SkillSources,
+        List<SkillRecord> Skills,
+        List<PluginPackageRecord> Packages,
+        (string DefaultProvider, string DefaultModel, string DefaultThinking) Settings);
+
+    private sealed record ProcessCaptureResult(int ExitCode, string Output, string Error, bool TimedOut);
+
+    private sealed class RunApprovalState
+    {
+        private readonly object _gate = new();
+        private readonly HashSet<string> _allowedRequestScopes = new(StringComparer.Ordinal);
+
+        public bool IsAllowed(string requestScope)
+        {
+            lock (_gate) return _allowedRequestScopes.Contains(requestScope);
+        }
+
+        public void Allow(string requestScope)
+        {
+            lock (_gate) _allowedRequestScopes.Add(requestScope);
+        }
+    }
+
+    private async Task<(bool Ready, string Message)> ValidateSelectedModelAsync()
+    {
+        if (!IsConfiguredValue(_activeProvider) || !IsConfiguredValue(_activeModel))
+        {
+            return (false, L(
+                "尚未配置 Provider/Model。输入内容已保留；请先打开设置 → Providers 配置 API 凭据并选择模型。",
+                "Provider/model is not configured. Your input was preserved; open Settings → Providers, configure credentials, and select a model."));
+        }
+
+        bool IsSelected(PiModelOptionRecord option)
+            => option.IsConfigured
+               && option.Provider.Equals(_activeProvider, StringComparison.OrdinalIgnoreCase)
+               && option.Model.Equals(_activeModel, StringComparison.OrdinalIgnoreCase);
+        if (_registryModelOptions.Any(IsSelected)) return (true, string.Empty);
+
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var models = await _agentBridge.ListModelsAsync(ResolveRunCwd(), _pi.AgentDir, timeout.Token);
+            _registryModelOptions = models.ToList();
+            RebuildModelOptions();
+            if (_registryModelOptions.Any(IsSelected)) return (true, string.Empty);
+            return (false, L(
+                $"当前模型 {_activeProvider}/{_activeModel} 没有可用凭据。输入内容已保留；请在设置 → Providers 中完成配置或选择一个可用模型。",
+                $"No usable credentials were found for {_activeProvider}/{_activeModel}. Your input was preserved; configure it in Settings → Providers or choose an available model."));
+        }
+        catch (Exception ex)
+        {
+            return (false, L(
+                $"发送前无法验证 Provider/Model：{ex.Message}。输入内容已保留；请检查设置和本地 runtime。",
+                $"Could not validate the provider/model before sending: {ex.Message}. Your input was preserved; check Settings and the local runtime."));
+        }
+    }
 }
 
 public sealed record NavItem(string Icon, string Label, string Kind = "");
@@ -5579,11 +6406,13 @@ public sealed class ToolApprovalRequestItem : INotifyPropertyChanged
         string intent,
         string summary,
         string detail,
+        string requestScope,
         string requestLabel,
         string allowText,
         string alwaysAllowText,
         string denyText,
         string guidancePlaceholder,
+        Action<string> allowForRun,
         TaskCompletionSource<PiToolApprovalDecision> decision)
     {
         ApprovalId = approvalId;
@@ -5591,11 +6420,13 @@ public sealed class ToolApprovalRequestItem : INotifyPropertyChanged
         Intent = intent;
         Summary = summary;
         Detail = detail;
+        RequestScope = requestScope;
         RequestLabel = requestLabel;
         AllowText = allowText;
         AlwaysAllowText = alwaysAllowText;
         DenyText = denyText;
         GuidancePlaceholder = guidancePlaceholder;
+        _allowForRun = allowForRun;
         Decision = decision;
     }
 
@@ -5604,12 +6435,15 @@ public sealed class ToolApprovalRequestItem : INotifyPropertyChanged
     public string Intent { get; }
     public string Summary { get; }
     public string Detail { get; }
+    public string RequestScope { get; }
     public string RequestLabel { get; }
     public string AllowText { get; }
     public string AlwaysAllowText { get; }
     public string DenyText { get; }
     public string GuidancePlaceholder { get; }
     public TaskCompletionSource<PiToolApprovalDecision> Decision { get; }
+    private readonly Action<string> _allowForRun;
+    public void AllowForRun() => _allowForRun(RequestScope);
     public string Guidance { get => _guidance; set { _guidance = value; OnPropertyChanged(); OnPropertyChanged(nameof(GuidancePlaceholderVisibility)); } }
     public Visibility GuidancePlaceholderVisibility => string.IsNullOrWhiteSpace(Guidance) ? Visibility.Visible : Visibility.Collapsed;
 
@@ -5623,6 +6457,7 @@ public sealed class PluginPackageViewItem : INotifyPropertyChanged
     {
         Source = package.Source;
         Scope = package.Scope;
+        RawStatus = package.Status;
         Disabled = package.Disabled;
         PackageName = package.PackageName;
         Version = package.Version;
@@ -5631,7 +6466,18 @@ public sealed class PluginPackageViewItem : INotifyPropertyChanged
         Title = string.IsNullOrWhiteSpace(package.PackageName) ? package.Source : package.PackageName;
         IsInstalled = !string.IsNullOrWhiteSpace(package.InstalledPath) && Directory.Exists(package.InstalledPath) && File.Exists(Path.Combine(package.InstalledPath, "package.json"));
         HasResolvedResources = package.Resources.Count > 0;
-        if (package.Disabled)
+        IsReadOnly = Scope.Equals("project", StringComparison.OrdinalIgnoreCase)
+                     || package.Status.Equals("untrusted", StringComparison.OrdinalIgnoreCase);
+        ScopeText = IsReadOnly
+            ? english ? "Project · read-only" : "项目 · 只读"
+            : english ? "Global" : "全局";
+        if (IsReadOnly)
+        {
+            StatusText = english ? "Project · read-only" : "项目 · 只读";
+            StatusBrush = StatusBackground(142, 151, 166);
+            StatusForeground = StatusForegroundBrush(126, 137, 154);
+        }
+        else if (package.Disabled)
         {
             StatusText = english ? "Disabled" : "已禁用";
             StatusBrush = StatusBackground(142, 151, 166);
@@ -5667,7 +6513,9 @@ public sealed class PluginPackageViewItem : INotifyPropertyChanged
 
     public string Source { get; }
     public string Scope { get; }
+    public string RawStatus { get; }
     public bool Disabled { get; }
+    public bool IsReadOnly { get; }
     public bool IsNpmPackage => Source.StartsWith("npm:", StringComparison.OrdinalIgnoreCase);
     public string PackageName { get; }
     public string Version { get; }
@@ -5683,7 +6531,7 @@ public sealed class PluginPackageViewItem : INotifyPropertyChanged
     public string ResourceSummary { get; }
     private static Brush StatusBackground(byte r, byte g, byte b) => new SolidColorBrush(Color.FromArgb(28, r, g, b));
     private static Brush StatusForegroundBrush(byte r, byte g, byte b) => new SolidColorBrush(Color.FromRgb(r, g, b));
-    public string ScopeText => Scope;
+    public string ScopeText { get; }
     public string Detail => $"{ScopeText} · {ResourceSummary} · {VersionText}";
     public bool IsSelected { get => _isSelected; set { if (_isSelected == value) return; _isSelected = value; OnPropertyChanged(); } }
 

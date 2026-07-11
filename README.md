@@ -141,6 +141,23 @@ ipi is local-first by design.
 - Plugin/package installs can execute third-party code through the package ecosystem; review sources before installing.
 - ipi is independent and unofficial. It is not affiliated with or endorsed by Pi, Codex, Claude Code, OpenAI, Anthropic, Google, or model providers.
 
+The detailed workspace-trust, tool-policy, runtime, and credential model is
+documented in [`SECURITY.md`](SECURITY.md).
+
+## Development
+
+The WPF application under `apps/windows/Ipi.Desktop` is the production desktop
+surface. The TypeScript TUI remains an experimental prototype and does not share
+the desktop session store or runtime lifecycle.
+
+Run the local checks with:
+
+```powershell
+npm.cmd ci
+npm.cmd test
+dotnet build apps\windows\Ipi.Desktop\Ipi.Desktop.csproj -c Debug
+```
+
 ## Platforms
 
 ipi is currently available as a Windows beta.
