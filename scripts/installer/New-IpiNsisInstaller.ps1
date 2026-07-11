@@ -65,6 +65,27 @@ $publishArgs = @(
 & dotnet @publishArgs
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
 
+Get-ChildItem -LiteralPath $stageAppDir -Recurse -File |
+  Where-Object { $_.Extension -ieq ".pdb" } |
+  Remove-Item -Force
+$requiredAppFiles = @(
+  "ipi.exe",
+  "agent-bridge.mjs",
+  "approval-router.mjs",
+  "bridge-policy.mjs",
+  "package-bridge.mjs",
+  "ipi-apply-update.ps1"
+)
+$missingAppFiles = $requiredAppFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $stageAppDir $_) -PathType Leaf) }
+if ($missingAppFiles.Count -gt 0) {
+  throw "Installer app payload is incomplete: $($missingAppFiles -join ', ')"
+}
+$payloadFiles = @(Get-ChildItem -LiteralPath $stageAppDir -Recurse -File)
+$payloadBytes = ($payloadFiles | Measure-Object Length -Sum).Sum
+if ($payloadFiles.Count -lt 10 -or $payloadBytes -lt 1MB) {
+  throw "Installer app payload is unexpectedly small: $($payloadFiles.Count) files, $payloadBytes bytes"
+}
+
 function Get-RelativePath([string]$BasePath, [string]$Path) {
   $baseFull = [System.IO.Path]::GetFullPath($BasePath).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
   $pathFull = [System.IO.Path]::GetFullPath($Path)
@@ -99,6 +120,8 @@ $nsi | Set-Content -Path $generatedNsi -Encoding UTF8
 & $MakensisPath $generatedNsi
 if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE" }
 if (!(Test-Path $outputExe)) { throw "Installer was not created: $outputExe" }
+$installerItem = Get-Item -LiteralPath $outputExe
+if ($installerItem.Length -lt 1MB) { throw "Installer is unexpectedly small: $($installerItem.Length) bytes" }
 
 $hash = Get-FileHash -Algorithm SHA256 -Path $outputExe
 "$($hash.Hash)  $(Split-Path $outputExe -Leaf)" | Set-Content -Path "$outputExe.sha256" -Encoding ASCII

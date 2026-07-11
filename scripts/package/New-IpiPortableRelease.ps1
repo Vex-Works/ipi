@@ -33,11 +33,11 @@ $zipPath = Join-Path $OutputRoot "$packageName.zip"
 $shaPath = "$zipPath.sha256"
 $manifestPath = Join-Path $stageRoot "ipi-portable-manifest.json"
 
-if (Test-Path $stageRoot) { Remove-Item -LiteralPath $stageRoot -Recurse -Force }
-New-Item -ItemType Directory -Path $appDir -Force | Out-Null
 New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
 
 if (-not $NoBuild) {
+  if (Test-Path $stageRoot) { Remove-Item -LiteralPath $stageRoot -Recurse -Force }
+  New-Item -ItemType Directory -Path $appDir -Force | Out-Null
   $publishArgs = @(
     "publish",
     $project,
@@ -48,6 +48,31 @@ if (-not $NoBuild) {
   )
   & dotnet @publishArgs
   if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
+}
+elseif (-not (Test-Path -LiteralPath $appDir -PathType Container)) {
+  throw "-NoBuild requires an existing staged app directory: $appDir"
+}
+
+Get-ChildItem -LiteralPath $appDir -Recurse -File |
+  Where-Object { $_.Extension -ieq ".pdb" } |
+  Remove-Item -Force
+
+$requiredAppFiles = @(
+  "ipi.exe",
+  "agent-bridge.mjs",
+  "approval-router.mjs",
+  "bridge-policy.mjs",
+  "package-bridge.mjs",
+  "ipi-apply-update.ps1"
+)
+$missingAppFiles = $requiredAppFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $appDir $_) -PathType Leaf) }
+if ($missingAppFiles.Count -gt 0) {
+  throw "Published app payload is incomplete: $($missingAppFiles -join ', ')"
+}
+$payloadFiles = @(Get-ChildItem -LiteralPath $appDir -Recurse -File)
+$payloadBytes = ($payloadFiles | Measure-Object Length -Sum).Sum
+if ($payloadFiles.Count -lt 10 -or $payloadBytes -lt 1MB) {
+  throw "Published app payload is unexpectedly small: $($payloadFiles.Count) files, $payloadBytes bytes"
 }
 
 $setupCmd = @'
@@ -85,10 +110,20 @@ $manifest = [ordered]@{
 }
 $manifest | ConvertTo-Json -Depth 5 | Set-Content -Path $manifestPath -Encoding UTF8
 
-Get-ChildItem -LiteralPath $appDir -Recurse -File -Include *.pdb | Remove-Item -Force
-
 if (Test-Path $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
 Compress-Archive -Path (Join-Path $stageRoot "*") -DestinationPath $zipPath -Force
+$zipItem = Get-Item -LiteralPath $zipPath
+if ($zipItem.Length -lt 1MB) { throw "Portable archive is unexpectedly small: $($zipItem.Length) bytes" }
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$archive = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+try {
+  if (-not ($archive.Entries | Where-Object { $_.FullName.Replace('\', '/') -ieq "ipi/ipi.exe" } | Select-Object -First 1)) {
+    throw "Portable archive does not contain ipi/ipi.exe"
+  }
+}
+finally {
+  $archive.Dispose()
+}
 $hash = Get-FileHash -Algorithm SHA256 -Path $zipPath
 "$($hash.Hash)  $(Split-Path $zipPath -Leaf)" | Set-Content -Path $shaPath -Encoding ASCII
 
