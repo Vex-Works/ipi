@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Media;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -47,6 +48,7 @@ public partial class MainWindow
     private readonly DispatcherTimer _sidebarPeekCloseTimer = new() { Interval = TimeSpan.FromMilliseconds(680) };
     private readonly DispatcherTimer _rightPanelPeekCloseTimer = new() { Interval = TimeSpan.FromMilliseconds(680) };
     private readonly ArchiveStoreService _archiveStore = new();
+    private readonly SoundPlayer _completionSound = new(CreateCompletionSoundStream());
     private readonly SettingsWindowViewModel _settingsViewModel;
     private SettingsWindow? _settingsWindow;
     private double _zoomScale = 1.0;
@@ -95,6 +97,7 @@ public partial class MainWindow
             SendWindowsDictationHotkey();
         }), DispatcherPriority.ApplicationIdle);
         viewModel.RequestScrollChatToLatest += ScheduleChatScrollToLatest;
+        viewModel.RequestCompletionSound += PlayCompletionSound;
         viewModel.PropertyChanged += ViewModel_PropertyChanged;
         DataContext = viewModel;
         _settingsViewModel = new SettingsWindowViewModel(new AppearanceSettingsService(), _archiveStore);
@@ -115,6 +118,7 @@ public partial class MainWindow
         Loaded += (_, _) =>
         {
             ApplyAppearanceSettings(_settingsViewModel.CurrentSettings);
+            UpdateNotificationSoundButton();
             ApplySidebarPanelVisualState(false);
             ApplyRightPanelVisualState(false);
             Dispatcher.BeginInvoke((Action)FocusPromptBox, DispatcherPriority.ApplicationIdle);
@@ -1016,6 +1020,64 @@ public partial class MainWindow
 
 
     private void FileSettings_Click(object sender, RoutedEventArgs e) => OpenSettingsWindow();
+
+    private void NotificationSound_Click(object sender, RoutedEventArgs e)
+    {
+        _settingsViewModel.SetNotificationSoundsEnabled(!_settingsViewModel.NotificationSoundsEnabled);
+        UpdateNotificationSoundButton();
+    }
+
+    private void UpdateNotificationSoundButton()
+    {
+        var enabled = _settingsViewModel.NotificationSoundsEnabled;
+        NotificationSoundIcon.Icon = enabled ? "volume-2" : "volume-x";
+        var label = enabled ? T("关闭回复完成提示音", "Mute reply completion sound") : T("开启回复完成提示音", "Enable reply completion sound");
+        NotificationSoundButton.ToolTip = label;
+        System.Windows.Automation.AutomationProperties.SetName(NotificationSoundButton, label);
+        NotificationSoundIcon.InvalidateVisual();
+    }
+
+    private void PlayCompletionSound()
+    {
+        if (!_settingsViewModel.NotificationSoundsEnabled) return;
+        _completionSound.Play();
+    }
+
+    private static Stream CreateCompletionSoundStream()
+    {
+        const int sampleRate = 44100;
+        const double durationSeconds = 0.18;
+        const double frequency = 1046.5;
+        const double peakAmplitude = 0.13;
+        const double fadeInSeconds = 0.012;
+        const double fadeOutSeconds = 0.065;
+        var sampleCount = (int)(sampleRate * durationSeconds);
+        var stream = new MemoryStream(44 + sampleCount * sizeof(short));
+        using (var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true))
+        {
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
+            writer.Write(36 + sampleCount * sizeof(short));
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("WAVEfmt "));
+            writer.Write(16);
+            writer.Write((short)1);
+            writer.Write((short)1);
+            writer.Write(sampleRate);
+            writer.Write(sampleRate * sizeof(short));
+            writer.Write((short)sizeof(short));
+            writer.Write((short)16);
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("data"));
+            writer.Write(sampleCount * sizeof(short));
+            for (var i = 0; i < sampleCount; i++)
+            {
+                var time = i / (double)sampleRate;
+                var envelope = Math.Min(1, time / fadeInSeconds) * Math.Min(1, (durationSeconds - time) / fadeOutSeconds);
+                var sample = Math.Sin(2 * Math.PI * frequency * time) * envelope * peakAmplitude;
+                writer.Write((short)(sample * short.MaxValue));
+            }
+        }
+        stream.Position = 0;
+        return stream;
+    }
 
     private void OpenSettingsWindow()
     {
@@ -2488,6 +2550,7 @@ public partial class MainWindow
     private void MainWindow_Closing(object? sender, CancelEventArgs e)
     {
         ViewModel.CancelActiveOperations();
+        _completionSound.Dispose();
         _settingsViewModel.Dispose();
         _settingsWindow?.Close();
     }

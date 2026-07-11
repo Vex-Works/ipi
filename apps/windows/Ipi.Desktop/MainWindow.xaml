@@ -899,6 +899,7 @@
         </StackPanel>
         <Border Grid.Column="1" Background="Transparent" />
         <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+          <Button x:Name="NotificationSoundButton" Style="{StaticResource GhostButton}" Width="38" Height="42" Click="NotificationSound_Click"><local:LucideIcon x:Name="NotificationSoundIcon" Icon="volume-2" Size="15" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Center" IsHitTestVisible="False" /></Button>
           <Button Style="{StaticResource GhostButton}" Width="38" Height="42" Click="FileSettings_Click" ToolTip="{Binding SettingsToolTip}" AutomationProperties.Name="{Binding SettingsToolTip}"><local:LucideIcon Icon="sliders-horizontal" Size="15" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Center" IsHitTestVisible="False" /></Button>
           <Button Style="{StaticResource GhostButton}" Width="38" Height="42" Click="ToggleRightPanel_Click" ToolTip="{Binding ToggleRightPanelToolTip}" AutomationProperties.Name="{Binding ToggleRightPanelToolTip}"><local:LucideIcon Icon="panel-right" Size="15" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Center" IsHitTestVisible="False" /></Button>
           <Button Style="{StaticResource GhostButton}" Width="46" Height="42" Click="Minimize_Click" AutomationProperties.Name="Minimize"><local:LucideIcon Icon="minus" Size="15" Stroke="{DynamicResource TextPrimary}" HorizontalAlignment="Center" IsHitTestVisible="False" /></Button>

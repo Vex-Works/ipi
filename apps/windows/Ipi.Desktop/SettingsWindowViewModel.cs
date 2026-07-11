@@ -59,6 +59,7 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
         _mode = settings.Mode;
         _theme = settings.Theme is "ipi" or "broadsheet" or "candy-block" ? settings.Theme : "ipi";
         _windowTransparency = settings.WindowTransparency;
+        NotificationSoundsEnabled = settings.NotificationSoundsEnabled;
         var pathSettings = _pathSettings.Load();
         _appDataDirOverride = pathSettings.AppDataDir ?? string.Empty;
         _localAppDataDirOverride = pathSettings.LocalAppDataDir ?? string.Empty;
@@ -114,7 +115,17 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
     public event PropertyChangedEventHandler? PropertyChanged;
     public event Action<AppearanceSettings>? SettingsChanged;
 
-    public AppearanceSettings CurrentSettings => new(Language, Mode, Theme, WindowTransparency);
+    public AppearanceSettings CurrentSettings => new(Language, Mode, Theme, WindowTransparency, NotificationSoundsEnabled);
+
+    public bool NotificationSoundsEnabled { get; private set; }
+
+    public void SetNotificationSoundsEnabled(bool enabled)
+    {
+        if (NotificationSoundsEnabled == enabled) return;
+        NotificationSoundsEnabled = enabled;
+        OnPropertyChanged();
+        SaveAndNotify();
+    }
 
     public string Language
     {

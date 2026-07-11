@@ -22,7 +22,13 @@ public sealed class AppearanceSettingsService
         try
         {
             if (!File.Exists(_settingsPath)) return AppearanceSettings.Default;
-            var settings = JsonSerializer.Deserialize<AppearanceSettings>(File.ReadAllText(_settingsPath), JsonOptions);
+            var json = File.ReadAllText(_settingsPath);
+            var settings = JsonSerializer.Deserialize<AppearanceSettings>(json, JsonOptions);
+            using var document = JsonDocument.Parse(json);
+            if (settings is not null && !document.RootElement.TryGetProperty(nameof(AppearanceSettings.NotificationSoundsEnabled), out _))
+            {
+                settings = settings with { NotificationSoundsEnabled = true };
+            }
             return settings?.Normalize() ?? AppearanceSettings.Default;
         }
         catch
@@ -63,9 +69,10 @@ public sealed record AppearanceSettings(
     string Language,
     string Mode,
     string Theme,
-    double WindowTransparency)
+    double WindowTransparency,
+    bool NotificationSoundsEnabled = true)
 {
-    public static AppearanceSettings Default => new("zh-CN", "light", "ipi", 0);
+    public static AppearanceSettings Default => new("zh-CN", "light", "ipi", 0, true);
 
     public AppearanceSettings Normalize()
     {

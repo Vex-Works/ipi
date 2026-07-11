@@ -31,6 +31,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public event Action? RequestWindowsDictationToggle;
     public event Action? RequestScrollChatToLatest;
+    public event Action? RequestCompletionSound;
     private bool _isAgentRunning;
     private int _runVersion;
     private int _viewVersion;
@@ -2093,6 +2094,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 ? TrimForRow(result.FinalText, 8000)
                 : L("Agent 已完成，但没有返回文本。可从侧边栏打开保存的会话查看完整记录。", "Agent finished without a text response. Open the saved session from the sidebar for full details.");
             await RevealAssistantMessageAsync(runVersion, runViewVersion, runRows, finalText, runCancellation.Token);
+            RequestCompletionSound?.Invoke();
             if (!string.IsNullOrWhiteSpace(result.SessionFile))
             {
                 _liveRunsBySessionFile[result.SessionFile] = new LiveRunViewState(runVersion, runViewVersion, runRows, runApprovals, runCancellation, IsRunning: false);
@@ -2134,6 +2136,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 StatusText = "agent failed";
                 SessionStatsText = "error";
             }
+            RequestCompletionSound?.Invoke();
         }
         finally
         {
