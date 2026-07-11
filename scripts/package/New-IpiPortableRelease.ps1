@@ -85,6 +85,8 @@ $manifest = [ordered]@{
 }
 $manifest | ConvertTo-Json -Depth 5 | Set-Content -Path $manifestPath -Encoding UTF8
 
+Get-ChildItem -LiteralPath $appDir -Recurse -File -Include *.pdb | Remove-Item -Force
+
 if (Test-Path $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
 Compress-Archive -Path (Join-Path $stageRoot "*") -DestinationPath $zipPath -Force
 $hash = Get-FileHash -Algorithm SHA256 -Path $zipPath
