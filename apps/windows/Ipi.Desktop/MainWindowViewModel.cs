@@ -26,6 +26,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private readonly PiDataService _pi = new();
     private readonly ArchiveStoreService _archive;
     private readonly Dictionary<string, string> _projectDisplayNames = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> _projectSidebarOrder = new();
+    private readonly Dictionary<string, List<string>> _projectSessionSidebarOrder = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _collapsedSidebarProjects = new(StringComparer.OrdinalIgnoreCase);
     private readonly PiAgentBridgeService _agentBridge = new();
     private readonly WindowsSpeechTranscriptionService _speech = new();
 
@@ -955,6 +958,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     {
         _archive = archiveStore ?? new ArchiveStoreService();
         LoadProjectDisplayNames();
+        LoadSidebarOrder();
         LoadUiSettings();
         ProjectPath = FindWorkspacePath();
 
@@ -1991,7 +1995,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         }
 
         var text = PromptText.Trim();
-        if (text.Length == 0) return;
+        if (text.Length == 0 && Attachments.Count == 0) return;
 
         if (text.StartsWith('/'))
         {
@@ -2060,7 +2064,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         IsChatMode = true;
         IsStartActionsVisible = false;
         CanReturnToChat = false;
-        PanelTitle = continuing ? PanelTitle : text.Length > 38 ? text[..38] + "…" : text;
+        var newConversationTitle = text.Length > 0
+            ? text.Length > 38 ? text[..38] + "…" : text
+            : userAttachments.Count == 1 ? userAttachments[0].Name : L("附件消息", "Attachment message");
+        PanelTitle = continuing ? PanelTitle : newConversationTitle;
         PanelSubtitle = IsGlobalChat ? L("默认聊天", "Default chat") : $"{L("项目", "Project")} · {ProjectPathShort}";
         IsComposerVisible = true;
         IsToolbarVisible = true;
@@ -2621,7 +2628,55 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     {
         var index = ProjectGroups.IndexOf(project);
         if (index > 0) ProjectGroups.Move(index, 0);
+        SaveSidebarOrder();
         StatusText = L($"已置顶项目 · {project.Name}", $"pinned project · {project.Name}");
+    }
+
+    public bool PreviewMoveProject(ProjectGroupItem source, ProjectGroupItem target, bool placeAfter)
+    {
+        var sourceIndex = ProjectGroups.IndexOf(source);
+        var targetIndex = ProjectGroups.IndexOf(target);
+        if (sourceIndex < 0 || targetIndex < 0 || sourceIndex == targetIndex) return false;
+        ProjectGroups.RemoveAt(sourceIndex);
+        targetIndex = ProjectGroups.IndexOf(target);
+        var insertIndex = Math.Clamp(targetIndex + (placeAfter ? 1 : 0), 0, ProjectGroups.Count);
+        if (insertIndex == sourceIndex)
+        {
+            ProjectGroups.Insert(sourceIndex, source);
+            return false;
+        }
+        ProjectGroups.Insert(insertIndex, source);
+        UpdateProjectPickerItems();
+        return true;
+    }
+
+    public bool PreviewMoveProjectSession(ProjectGroupItem owner, SessionItem source, SessionItem target, bool placeAfter)
+    {
+        if (!ProjectGroups.Contains(owner)) return false;
+        var sourceIndex = owner.Sessions.IndexOf(source);
+        var targetIndex = owner.Sessions.IndexOf(target);
+        if (sourceIndex < 0 || targetIndex < 0 || sourceIndex == targetIndex) return false;
+        owner.Sessions.RemoveAt(sourceIndex);
+        targetIndex = owner.Sessions.IndexOf(target);
+        var insertIndex = Math.Clamp(targetIndex + (placeAfter ? 1 : 0), 0, owner.Sessions.Count);
+        if (insertIndex == sourceIndex)
+        {
+            owner.Sessions.Insert(sourceIndex, source);
+            return false;
+        }
+        owner.Sessions.Insert(insertIndex, source);
+        return true;
+    }
+
+    public void CommitSidebarOrder() => SaveSidebarOrder();
+
+    public void SetProjectExpanded(ProjectGroupItem project, bool expanded)
+    {
+        project.IsExpanded = expanded;
+        var root = NormalizePath(project.RootPath);
+        if (expanded) _collapsedSidebarProjects.Remove(root);
+        else if (!string.IsNullOrWhiteSpace(root)) _collapsedSidebarProjects.Add(root);
+        SaveSidebarOrder();
     }
 
     public void OpenProjectInExplorer(ProjectGroupItem project)
@@ -2640,6 +2695,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public void ArchiveProject(ProjectGroupItem project)
     {
         if (ProjectGroups.Contains(project)) ProjectGroups.Remove(project);
+        SaveSidebarOrder();
         StatusText = L($"已从侧栏移除 · {project.Name}", $"removed from sidebar · {project.Name}");
     }
 
@@ -2684,6 +2740,92 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     }
 
     private string ProjectMetadataPath => Path.Combine(_pi.AgentDir, "ipi-projects.json");
+    private string SidebarOrderPath => Path.Combine(_pi.AgentDir, "ipi-sidebar-order.json");
+
+    private void LoadSidebarOrder()
+    {
+        try
+        {
+            if (!File.Exists(SidebarOrderPath)) return;
+            var state = JsonSerializer.Deserialize<SidebarOrderState>(File.ReadAllText(SidebarOrderPath), new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (state is null) return;
+            foreach (var path in state.Projects ?? Array.Empty<string>())
+            {
+                var normalized = NormalizePath(path);
+                if (!string.IsNullOrWhiteSpace(normalized) && !_projectSidebarOrder.Contains(normalized, StringComparer.OrdinalIgnoreCase)) _projectSidebarOrder.Add(normalized);
+            }
+            foreach (var pair in state.Sessions ?? new Dictionary<string, List<string>>())
+            {
+                var root = NormalizePath(pair.Key);
+                if (string.IsNullOrWhiteSpace(root)) continue;
+                _projectSessionSidebarOrder[root] = pair.Value.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            }
+            foreach (var path in state.CollapsedProjects ?? Array.Empty<string>())
+            {
+                var normalized = NormalizePath(path);
+                if (!string.IsNullOrWhiteSpace(normalized)) _collapsedSidebarProjects.Add(normalized);
+            }
+        }
+        catch
+        {
+            // Ignore malformed local sidebar metadata.
+        }
+    }
+
+    private void SaveSidebarOrder()
+    {
+        try
+        {
+            Directory.CreateDirectory(_pi.AgentDir);
+            _projectSidebarOrder.Clear();
+            _projectSidebarOrder.AddRange(ProjectGroups.Select(project => NormalizePath(project.RootPath)).Where(path => !string.IsNullOrWhiteSpace(path)));
+            _projectSessionSidebarOrder.Clear();
+            foreach (var project in ProjectGroups)
+            {
+                var root = NormalizePath(project.RootPath);
+                if (string.IsNullOrWhiteSpace(root)) continue;
+                _projectSessionSidebarOrder[root] = project.Sessions.Select(session => session.FilePath).Where(path => !string.IsNullOrWhiteSpace(path)).Cast<string>().ToList();
+            }
+            _collapsedSidebarProjects.Clear();
+            foreach (var project in ProjectGroups.Where(project => !project.IsExpanded))
+            {
+                var root = NormalizePath(project.RootPath);
+                if (!string.IsNullOrWhiteSpace(root)) _collapsedSidebarProjects.Add(root);
+            }
+            var state = new SidebarOrderState(_projectSidebarOrder.ToList(), _projectSessionSidebarOrder.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase), _collapsedSidebarProjects.ToList());
+            File.WriteAllText(SidebarOrderPath, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+        }
+        catch (Exception ex)
+        {
+            StatusText = L($"保存侧栏顺序失败 · {ex.Message}", $"failed to save sidebar order · {ex.Message}");
+        }
+    }
+
+    private void ApplySavedSidebarOrder()
+    {
+        var projectIndexes = _projectSidebarOrder.Select((path, index) => (path, index)).ToDictionary(pair => pair.path, pair => pair.index, StringComparer.OrdinalIgnoreCase);
+        var orderedProjects = ProjectGroups.Select((project, index) => (project, index))
+            .OrderBy(item => projectIndexes.TryGetValue(NormalizePath(item.project.RootPath), out var savedIndex) ? savedIndex : int.MaxValue)
+            .ThenBy(item => item.index)
+            .Select(item => item.project)
+            .ToList();
+        ProjectGroups.Clear();
+        foreach (var project in orderedProjects)
+        {
+            project.IsExpanded = !_collapsedSidebarProjects.Contains(NormalizePath(project.RootPath));
+            ProjectGroups.Add(project);
+            var root = NormalizePath(project.RootPath);
+            if (!_projectSessionSidebarOrder.TryGetValue(root, out var sessionOrder)) continue;
+            var sessionIndexes = sessionOrder.Select((path, index) => (path, index)).ToDictionary(pair => pair.path, pair => pair.index, StringComparer.OrdinalIgnoreCase);
+            var orderedSessions = project.Sessions.Select((session, index) => (session, index))
+                .OrderBy(item => item.session.FilePath is not null && sessionIndexes.TryGetValue(item.session.FilePath, out var savedIndex) ? savedIndex : int.MaxValue)
+                .ThenBy(item => item.index)
+                .Select(item => item.session)
+                .ToList();
+            project.Sessions.Clear();
+            foreach (var session in orderedSessions) project.Sessions.Add(session);
+        }
+    }
 
     private void LoadProjectDisplayNames()
     {
@@ -2729,6 +2871,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         if (string.IsNullOrWhiteSpace(session.FilePath)) return;
         MoveSessionToTop(Sessions, session.FilePath);
         foreach (var project in ProjectGroups) MoveSessionToTop(project.Sessions, session.FilePath);
+        SaveSidebarOrder();
         StatusText = $"pinned chat · {session.Title}";
     }
 
@@ -2774,6 +2917,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             .Max()).ToList();
         ProjectGroups.Clear();
         foreach (var project in ordered) ProjectGroups.Add(project);
+        SaveSidebarOrder();
         IsProjectsExpanded = true;
         StatusText = L("已按最近项目排序", "sorted by recent projects");
     }
@@ -3260,7 +3404,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
         ApprovalOptions.Clear();
         ApprovalOptions.Add(new("shield-check", ApprovalLabelFor(0), L("编辑、Shell、敏感路径、批量搜索或工作区外读取时询问", "Ask before edits, shell, sensitive paths, bulk search, or outside-workspace reads"), _approvalModeIndex == 0 ? "✓" : ""));
-        ApprovalOptions.Add(new("sparkles", ApprovalLabelFor(1), L("工作区内编辑可自动允许；Shell、敏感路径和批量搜索仍询问", "Auto-allow in-workspace edits; still ask for shell, sensitive paths, and bulk search"), _approvalModeIndex == 1 ? "✓" : ""));
+        ApprovalOptions.Add(new("sparkles", ApprovalLabelFor(1), L("自动允许工作区内编辑及 Pi/ipi 运行时读取；其他外部路径、Shell、敏感路径和批量搜索仍询问", "Auto-allow in-workspace edits and Pi/ipi runtime reads; still ask for other external paths, shell, sensitive paths, and bulk search"), _approvalModeIndex == 1 ? "✓" : ""));
         ApprovalOptions.Add(new("globe", ApprovalLabelFor(2), L("不弹出工具审批；仍受工具/系统限制", "No tool approval prompts; still limited by tools/system"), _approvalModeIndex == 2 ? "✓" : ""));
         ApprovalOptions.Add(new("settings", ApprovalLabelFor(3), customConfig.ModeKey is null
             ? L("点击选择规则并创建用户级审批配置", "Click to choose a policy and create a user-level approval config")
@@ -3465,6 +3609,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 L("本轮允许相同请求", "Allow same request this run"),
                 L("拒绝", "Deny"),
                 L("可选：告诉 agent 换一种做法…", "Optional: tell the agent what to do instead…"),
+                L("发送引导", "Send guidance"),
                 approvalState.Allow,
                 tcs);
             approvals.Add(item);
@@ -3558,7 +3703,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         var approved = decision is ToolApprovalDecisionKind.Allow or ToolApprovalDecisionKind.AlwaysAllow;
         var reason = approved ? "" : item.Guidance.Trim();
         item.Decision.TrySetResult(new PiToolApprovalDecision(approved, reason));
-        StatusText = approved ? $"approved tool · {item.ToolName}" : $"denied tool · {item.ToolName}";
+        StatusText = approved
+            ? $"approved tool · {item.ToolName}"
+            : decision == ToolApprovalDecisionKind.Guide ? $"sent guidance · {item.ToolName}" : $"denied tool · {item.ToolName}";
     }
 
     private string BuildPromptWithAttachments(string text)
@@ -5027,6 +5174,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             ProjectGroups.Add(new(name, ShortenPath(first.Cwd), first.Cwd, new ObservableCollection<SessionItem>(group.OrderByDescending(s => s.Modified).Take(4).Select(ToSidebarSession)), LooksLikeGitRepository(first.Cwd)));
         }
 
+        ApplySavedSidebarOrder();
         UpdateProjectPickerItems();
     }
 
@@ -6395,6 +6543,7 @@ public sealed class ChatMarkerItem : INotifyPropertyChanged
 public enum ToolApprovalDecisionKind
 {
     Deny,
+    Guide,
     Allow,
     AlwaysAllow,
 }
@@ -6415,6 +6564,7 @@ public sealed class ToolApprovalRequestItem : INotifyPropertyChanged
         string alwaysAllowText,
         string denyText,
         string guidancePlaceholder,
+        string sendGuidanceText,
         Action<string> allowForRun,
         TaskCompletionSource<PiToolApprovalDecision> decision)
     {
@@ -6429,6 +6579,7 @@ public sealed class ToolApprovalRequestItem : INotifyPropertyChanged
         AlwaysAllowText = alwaysAllowText;
         DenyText = denyText;
         GuidancePlaceholder = guidancePlaceholder;
+        SendGuidanceText = sendGuidanceText;
         _allowForRun = allowForRun;
         Decision = decision;
     }
@@ -6444,11 +6595,13 @@ public sealed class ToolApprovalRequestItem : INotifyPropertyChanged
     public string AlwaysAllowText { get; }
     public string DenyText { get; }
     public string GuidancePlaceholder { get; }
+    public string SendGuidanceText { get; }
     public TaskCompletionSource<PiToolApprovalDecision> Decision { get; }
     private readonly Action<string> _allowForRun;
     public void AllowForRun() => _allowForRun(RequestScope);
-    public string Guidance { get => _guidance; set { _guidance = value; OnPropertyChanged(); OnPropertyChanged(nameof(GuidancePlaceholderVisibility)); } }
+    public string Guidance { get => _guidance; set { _guidance = value; OnPropertyChanged(); OnPropertyChanged(nameof(GuidancePlaceholderVisibility)); OnPropertyChanged(nameof(CanSendGuidance)); } }
     public Visibility GuidancePlaceholderVisibility => string.IsNullOrWhiteSpace(Guidance) ? Visibility.Visible : Visibility.Collapsed;
+    public bool CanSendGuidance => !string.IsNullOrWhiteSpace(Guidance);
 
     public event PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
@@ -6557,8 +6710,25 @@ public sealed record PluginResourceViewItem(string Name, string Path);
 
 public sealed record ToolRunConfig(IReadOnlyList<string>? Tools, string? NoTools, string Description);
 public sealed record ToolPresetOption(string Key, string Label, string Description, IReadOnlyList<string>? Tools, string? NoTools);
-public sealed record ProjectGroupItem(string Name, string Path, string RootPath, ObservableCollection<SessionItem> Sessions, bool CanCreateWorktree = false);
+public sealed record ProjectGroupItem(string Name, string Path, string RootPath, ObservableCollection<SessionItem> Sessions, bool CanCreateWorktree = false) : INotifyPropertyChanged
+{
+    private bool _isExpanded = true;
+    public bool IsExpanded
+    {
+        get => _isExpanded;
+        set
+        {
+            if (_isExpanded == value) return;
+            _isExpanded = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsExpanded)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FolderIcon)));
+        }
+    }
+    public string FolderIcon => IsExpanded ? "folder-open" : "folder";
+    public event PropertyChangedEventHandler? PropertyChanged;
+}
 public sealed record SessionItem(string Icon, string Title, bool Active, string? FilePath, string Detail, int MessageCount);
+public sealed record SidebarOrderState(IReadOnlyList<string>? Projects, IReadOnlyDictionary<string, List<string>>? Sessions, IReadOnlyList<string>? CollapsedProjects);
 
 public sealed class FileExplorerNode : INotifyPropertyChanged
 {

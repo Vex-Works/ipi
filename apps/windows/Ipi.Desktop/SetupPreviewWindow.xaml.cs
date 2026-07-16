@@ -236,7 +236,8 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
 {
     private PiDataService _pi = new();
     private readonly PiAgentBridgeService _bridge = new();
-    private readonly RuntimeBootstrapService _bootstrap = new();
+    private RuntimeBootstrapService _bootstrap = new();
+    private readonly PathSettingsService _pathSettings = new();
     private readonly List<PiProviderCatalogRecord> _providerCatalog = new();
     private readonly List<PiModelOptionRecord> _registryModels = new();
     private string _screen = "welcome";
@@ -273,6 +274,7 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
         if (postInstallMode)
         {
             _installPath = AppContext.BaseDirectory;
+            ConfigureFirstInstallStorageForSelectedLocation();
             _screen = "progress";
         }
         RefreshSetupPlan();
@@ -736,6 +738,43 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
         var sourceRoot = NormalizeDirectoryPath(AppContext.BaseDirectory);
         if (IsSameDirectory(sourceRoot, targetPath) || !Directory.Exists(targetPath)) return false;
         return Directory.EnumerateFileSystemEntries(targetPath).Any();
+    }
+
+    private void ConfigureFirstInstallStorageForSelectedLocation()
+    {
+        // NSIS has already installed the app into the directory the person selected.  On a
+        // genuinely fresh install, keep the accompanying runtime and agent data there too
+        // instead of silently falling back to the system drive's AppData folders.
+        var selectedRoot = NormalizeDirectoryPath(InstallPath);
+        var defaultInstallRoot = NormalizeDirectoryPath(IpiPathService.DefaultLocalAppDataDir);
+        var existingPaths = _pathSettings.Load();
+        if (IsSameDirectory(selectedRoot, defaultInstallRoot)
+            || !string.IsNullOrWhiteSpace(existingPaths.AppDataDir)
+            || !string.IsNullOrWhiteSpace(existingPaths.LocalAppDataDir)
+            || HasExistingDefaultStorage())
+        {
+            return;
+        }
+
+        var settings = new IpiPathSettings(
+            Path.Combine(selectedRoot, "data"),
+            Path.Combine(selectedRoot, "runtime"));
+        _pathSettings.Save(settings);
+
+        // Services capture their roots at construction, so recreate them after persisting
+        // the first-install choice before any inspection or runtime download begins.
+        _bootstrap = new RuntimeBootstrapService();
+        _pi = new PiDataService();
+        _runtimeInfo = _pi.RuntimeInfo;
+    }
+
+    private static bool HasExistingDefaultStorage()
+    {
+        var defaultAppData = IpiPathService.DefaultAppDataDir;
+        var defaultLocalAppData = IpiPathService.DefaultLocalAppDataDir;
+        return File.Exists(Path.Combine(defaultAppData, "runtime.json"))
+               || Directory.Exists(Path.Combine(defaultAppData, "agent"))
+               || Directory.Exists(Path.Combine(defaultLocalAppData, "runtime"));
     }
 
     public bool TryGetInstalledExecutable(out string executablePath)

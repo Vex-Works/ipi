@@ -95,6 +95,7 @@ public sealed class PiAgentBridgeService
             noTools,
             approvalMode,
             approvalRules,
+            trustedReadRoots = new[] { agentDir, runtime.PiCodingAgentRoot },
             branchFromEntryId,
             compactInstructions,
             provider,

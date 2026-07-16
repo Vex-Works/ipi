@@ -108,6 +108,20 @@ function isWithin(root, candidate) {
   return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
 }
 
+function isWithinTrustedReadRoot(candidate, input) {
+  const roots = Array.isArray(input?.trustedReadRoots) ? input.trustedReadRoots : [];
+  for (const rootValue of roots) {
+    if (typeof rootValue !== 'string' || !rootValue.trim()) continue;
+    try {
+      const root = realpathNative(path.resolve(rootValue));
+      if (isWithin(root, candidate)) return true;
+    } catch {
+      // Invalid or unavailable trusted roots never fail open.
+    }
+  }
+  return false;
+}
+
 export function inspectToolPaths(toolName, args, cwd) {
   const candidates = pathArguments(args);
   if (candidates.length === 0) {
@@ -188,6 +202,9 @@ export function decideToolPolicy(toolNameValue, args, input = {}) {
     }
     if (toolName === 'grep' && mode !== 'auto') {
       return decision('ask', 'Bulk content search requires approval because it may traverse sensitive files');
+    }
+    if (mode === 'on-risk' && READ_PATH_TOOLS.has(toolName) && pathInspection.paths.every((candidate) => isWithinTrustedReadRoot(candidate, input))) {
+      return decision('allow', `${toolName} targets a trusted Pi/ipi runtime path`);
     }
   }
 

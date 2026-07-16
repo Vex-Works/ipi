@@ -1030,11 +1030,11 @@
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
                       <StackPanel Margin="0,0,0,8">
-                        <Grid x:Name="ProjectRow" Width="{Binding DataContext.SidebarRowWidth, RelativeSource={RelativeSource AncestorType=Window}}" HorizontalAlignment="Left">
-                          <Button Style="{StaticResource SideButton}" Click="Nav_Click" Width="{Binding DataContext.SidebarRowWidth, RelativeSource={RelativeSource AncestorType=Window}}" HorizontalAlignment="Left" Padding="8,6">
+                        <Grid x:Name="ProjectRow" Width="{Binding DataContext.SidebarRowWidth, RelativeSource={RelativeSource AncestorType=Window}}" HorizontalAlignment="Left" PreviewMouseLeftButtonDown="ProjectDrag_MouseLeftButtonDown" PreviewMouseMove="ProjectDrag_MouseMove" PreviewMouseLeftButtonUp="ProjectDrag_MouseLeftButtonUp">
+                          <Button Style="{StaticResource SideButton}" Click="ProjectToggle_Click" Tag="{Binding ElementName=ProjectSessionsHost}" Width="{Binding DataContext.SidebarRowWidth, RelativeSource={RelativeSource AncestorType=Window}}" HorizontalAlignment="Left" Padding="8,6">
                             <Grid>
                               <Grid.ColumnDefinitions><ColumnDefinition Width="26" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                              <local:LucideIcon Icon="folder" Size="14" Stroke="{DynamicResource TextMuted}" VerticalAlignment="Top" Margin="0,2,0,0" />
+                              <local:LucideIcon Icon="{Binding FolderIcon}" Size="14" Stroke="{DynamicResource TextMuted}" VerticalAlignment="Top" Margin="0,2,0,0" />
                               <StackPanel Grid.Column="1" Margin="0,0,54,0">
                                 <TextBlock Text="{Binding Name}" Foreground="{DynamicResource TextPrimary}" FontSize="13" FontWeight="Medium" TextTrimming="CharacterEllipsis" />
                                 <TextBlock Text="{Binding Path}" Foreground="{DynamicResource TextDim}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" />
@@ -1084,10 +1084,21 @@
                             </Button>
                           </StackPanel>
                         </Grid>
+                        <Border x:Name="ProjectSessionsHost" ClipToBounds="True" IsHitTestVisible="{Binding IsExpanded}">
+                        <Border.RenderTransform><TranslateTransform Y="0" /></Border.RenderTransform>
+                        <Border.Style>
+                          <Style TargetType="Border">
+                            <Setter Property="MaxHeight" Value="5000" />
+                            <Setter Property="Opacity" Value="1" />
+                            <Style.Triggers>
+                              <DataTrigger Binding="{Binding IsExpanded}" Value="False"><Setter Property="MaxHeight" Value="0" /><Setter Property="Opacity" Value="0" /></DataTrigger>
+                            </Style.Triggers>
+                          </Style>
+                        </Border.Style>
                         <ItemsControl ItemsSource="{Binding Sessions}" Margin="28,2,0,0">
                           <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                              <Grid x:Name="NestedSessionRow" Width="{Binding DataContext.SidebarNestedRowWidth, RelativeSource={RelativeSource AncestorType=Window}}" HorizontalAlignment="Left" Margin="0,0,0,1">
+                              <Grid x:Name="NestedSessionRow" Width="{Binding DataContext.SidebarNestedRowWidth, RelativeSource={RelativeSource AncestorType=Window}}" HorizontalAlignment="Left" Margin="0,0,0,1" Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=ItemsControl}}" PreviewMouseLeftButtonDown="ProjectSessionDrag_MouseLeftButtonDown" PreviewMouseMove="ProjectSessionDrag_MouseMove" PreviewMouseLeftButtonUp="ProjectSessionDrag_MouseLeftButtonUp">
                                 <Button Style="{StaticResource SideButton}" Click="Nav_Click" Padding="4,5" Width="{Binding DataContext.SidebarNestedRowWidth, RelativeSource={RelativeSource AncestorType=Window}}" HorizontalAlignment="Left">
                                   <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="18" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
@@ -1116,6 +1127,7 @@
                             </DataTemplate>
                           </ItemsControl.ItemTemplate>
                         </ItemsControl>
+                        </Border>
                       </StackPanel>
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
@@ -2030,8 +2042,12 @@
                 </StackPanel>
                 <Border Grid.Row="1" Grid.ColumnSpan="2" Height="34" Background="{DynamicResource RowBg}" BorderBrush="{DynamicResource PopupBorder}" BorderThickness="1" CornerRadius="9" Margin="0,12,0,0" Padding="10,0">
                   <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <TextBlock Text="{Binding GuidancePlaceholder}" Visibility="{Binding GuidancePlaceholderVisibility}" Foreground="{DynamicResource TextDim}" FontSize="12" VerticalAlignment="Center" IsHitTestVisible="False" />
-                    <TextBox Text="{Binding Guidance, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimary}" FontSize="12" VerticalContentAlignment="Center" />
+                    <TextBox Text="{Binding Guidance, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource TextPrimary}" FontSize="12" VerticalContentAlignment="Center" KeyDown="ToolApprovalGuidance_KeyDown" />
+                    <Button Grid.Column="1" Style="{StaticResource ToolbarButton}" Click="ToolApprovalGuide_Click" IsEnabled="{Binding CanSendGuidance}" Padding="10,4" Margin="8,0,0,0">
+                      <TextBlock Text="{Binding SendGuidanceText}" Foreground="{DynamicResource TextPrimary}" FontSize="12" FontWeight="SemiBold" />
+                    </Button>
                   </Grid>
                 </Border>
               </Grid>

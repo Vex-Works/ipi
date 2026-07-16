@@ -9,11 +9,15 @@ import { buildToolApprovalScope, decideToolPolicy, inspectToolPaths } from './br
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ipi-bridge-policy-'));
 const workspace = path.join(root, 'workspace');
 const outside = path.join(root, 'outside');
+const trustedRuntime = path.join(outside, 'pi-runtime');
 fs.mkdirSync(workspace);
 fs.mkdirSync(outside);
+fs.mkdirSync(trustedRuntime);
 fs.writeFileSync(path.join(workspace, 'inside.txt'), 'inside');
 fs.writeFileSync(path.join(workspace, '.env'), 'SECRET=sample');
 fs.writeFileSync(path.join(outside, 'secret.txt'), 'secret');
+fs.writeFileSync(path.join(trustedRuntime, 'SKILL.md'), 'trusted skill');
+fs.writeFileSync(path.join(trustedRuntime, '.env'), 'SECRET=sample');
 
 test.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
@@ -92,6 +96,15 @@ test('on-risk only auto-allows in-workspace mutations', () => {
   assert.equal(decide('write', { path: 'new.txt' }, 'on-risk').action, 'allow');
   assert.equal(decide('write', { path: path.join(outside, 'new.txt') }, 'on-risk').action, 'ask');
   assert.equal(decide('bash', { command: 'git status' }, 'on-risk').action, 'ask');
+});
+
+test('on-risk allows non-sensitive reads from declared Pi runtime roots', () => {
+  const input = { cwd: workspace, approvalMode: 'on-risk', trustedReadRoots: [trustedRuntime] };
+  assert.equal(decideToolPolicy('read', { path: path.join(trustedRuntime, 'SKILL.md') }, input).action, 'allow');
+  assert.equal(decideToolPolicy('ls', { path: trustedRuntime }, input).action, 'allow');
+  assert.equal(decideToolPolicy('grep', { path: trustedRuntime, pattern: 'skill' }, input).action, 'ask');
+  assert.equal(decideToolPolicy('read', { path: path.join(trustedRuntime, '.env') }, input).action, 'ask');
+  assert.equal(decideToolPolicy('read', { path: path.join(outside, 'secret.txt') }, input).action, 'ask');
 });
 
 test('auto allows known verified tools but unknown tools still ask', () => {

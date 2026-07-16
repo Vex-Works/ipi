@@ -20,6 +20,8 @@ namespace Ipi.Desktop;
 
 public partial class MainWindow
 {
+    private sealed record ProjectSessionDragData(ProjectGroupItem Owner, SessionItem Session);
+
     private const byte VkLeftWindows = 0x5B;
     private const byte VkH = 0x48;
     private const uint KeyEventUp = 0x0002;
@@ -56,6 +58,15 @@ public partial class MainWindow
     private string _lastBrowserUrl = "about:blank";
     private WindowState _windowStateBeforeFullScreen = WindowState.Normal;
     private ScrollViewer? _chatScrollViewer;
+    private Point _projectDragStart;
+    private ProjectGroupItem? _projectDragSource;
+    private FrameworkElement? _projectDragElement;
+    private bool _isProjectDragging;
+    private Point _projectSessionDragStart;
+    private SessionItem? _projectSessionDragSource;
+    private ProjectGroupItem? _projectSessionDragOwner;
+    private FrameworkElement? _projectSessionDragElement;
+    private bool _isProjectSessionDragging;
 
     private ScrollViewer? TryGetChatScrollViewer()
     {
@@ -1490,6 +1501,179 @@ public partial class MainWindow
 
     private void ProjectPath_Click(object sender, RoutedEventArgs e) => ViewModel.OpenCurrentProject();
 
+    private void ProjectToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: ProjectGroupItem project, Tag: Border host }) return;
+        var expand = !project.IsExpanded;
+        var currentHeight = host.ActualHeight;
+        ViewModel.SetProjectExpanded(project, expand);
+        host.IsHitTestVisible = expand;
+        var existingTranslate = host.RenderTransform as TranslateTransform;
+        var translate = existingTranslate is { IsFrozen: false }
+            ? existingTranslate
+            : new TranslateTransform(existingTranslate?.X ?? 0, existingTranslate?.Y ?? 0);
+        if (!ReferenceEquals(existingTranslate, translate)) host.RenderTransform = translate;
+        if (expand)
+        {
+            host.Measure(new Size(host.ActualWidth > 0 ? host.ActualWidth : SidebarPanel.ActualWidth, double.PositiveInfinity));
+            var targetHeight = Math.Max(1, host.DesiredSize.Height);
+            host.MaxHeight = 0;
+            host.Opacity = 0;
+            translate.Y = -5;
+            var heightAnimation = new DoubleAnimation(0, targetHeight, TimeSpan.FromMilliseconds(180)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }, FillBehavior = FillBehavior.Stop };
+            heightAnimation.Completed += (_, _) =>
+            {
+                host.ClearValue(MaxHeightProperty);
+                host.ClearValue(OpacityProperty);
+            };
+            host.BeginAnimation(MaxHeightProperty, heightAnimation);
+            host.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(145)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }, FillBehavior = FillBehavior.Stop });
+            translate.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(-5, 0, TimeSpan.FromMilliseconds(180)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }, FillBehavior = FillBehavior.Stop });
+        }
+        else
+        {
+            host.MaxHeight = Math.Max(1, currentHeight);
+            host.Opacity = 1;
+            var heightAnimation = new DoubleAnimation(host.MaxHeight, 0, TimeSpan.FromMilliseconds(155)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut }, FillBehavior = FillBehavior.Stop };
+            heightAnimation.Completed += (_, _) =>
+            {
+                host.ClearValue(MaxHeightProperty);
+                host.ClearValue(OpacityProperty);
+            };
+            host.BeginAnimation(MaxHeightProperty, heightAnimation);
+            host.BeginAnimation(OpacityProperty, new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(120)) { FillBehavior = FillBehavior.Stop });
+            translate.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, -4, TimeSpan.FromMilliseconds(145)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }, FillBehavior = FillBehavior.Stop });
+        }
+    }
+
+    private void ProjectDrag_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _projectDragStart = e.GetPosition(this);
+        _projectDragSource = (sender as FrameworkElement)?.DataContext as ProjectGroupItem;
+        _projectDragElement = sender as FrameworkElement;
+        _isProjectDragging = false;
+    }
+
+    private void ProjectDrag_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (e.LeftButton != MouseButtonState.Pressed || _projectDragSource is null || _projectDragElement is null) return;
+        var position = e.GetPosition(this);
+        if (!_isProjectDragging)
+        {
+            if (Math.Abs(position.X - _projectDragStart.X) < SystemParameters.MinimumHorizontalDragDistance
+                && Math.Abs(position.Y - _projectDragStart.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+            _isProjectDragging = _projectDragElement.CaptureMouse();
+            if (!_isProjectDragging) return;
+            _projectDragElement.Opacity = 0.52;
+        }
+        var targetElement = FindVisualAncestorByName(InputHitTest(position) as DependencyObject, "ProjectRow");
+        if (targetElement?.DataContext is not ProjectGroupItem target) return;
+        var items = FindVisualAncestor<ItemsControl>(targetElement);
+        if (items is not null) AnimateItemsControlReorder(items, () => ViewModel.PreviewMoveProject(_projectDragSource, target, position.Y > targetElement.TranslatePoint(new Point(0, 0), this).Y + targetElement.ActualHeight / 2));
+        e.Handled = true;
+    }
+
+    private void ProjectDrag_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_isProjectDragging)
+        {
+            FinishSidebarDrag(_projectDragElement);
+            e.Handled = true;
+        }
+        _projectDragSource = null;
+        _projectDragElement = null;
+    }
+
+    private void ProjectSessionDrag_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _projectSessionDragStart = e.GetPosition(this);
+        _projectSessionDragSource = (sender as FrameworkElement)?.DataContext as SessionItem;
+        _projectSessionDragOwner = (sender as FrameworkElement)?.Tag as ProjectGroupItem;
+        _projectSessionDragElement = sender as FrameworkElement;
+        _isProjectSessionDragging = false;
+    }
+
+    private void ProjectSessionDrag_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (e.LeftButton != MouseButtonState.Pressed || _projectSessionDragSource is null || _projectSessionDragOwner is null || _projectSessionDragElement is null) return;
+        var position = e.GetPosition(this);
+        if (!_isProjectSessionDragging)
+        {
+            if (Math.Abs(position.X - _projectSessionDragStart.X) < SystemParameters.MinimumHorizontalDragDistance
+                && Math.Abs(position.Y - _projectSessionDragStart.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+            _isProjectSessionDragging = _projectSessionDragElement.CaptureMouse();
+            if (!_isProjectSessionDragging) return;
+            _projectSessionDragElement.Opacity = 0.52;
+        }
+        var targetElement = FindVisualAncestorByName(InputHitTest(position) as DependencyObject, "NestedSessionRow");
+        if (targetElement?.DataContext is not SessionItem target
+            || targetElement.Tag is not ProjectGroupItem owner
+            || !ReferenceEquals(owner, _projectSessionDragOwner)) return;
+        var items = FindVisualAncestor<ItemsControl>(targetElement);
+        if (items is not null) AnimateItemsControlReorder(items, () => ViewModel.PreviewMoveProjectSession(owner, _projectSessionDragSource, target, position.Y > targetElement.TranslatePoint(new Point(0, 0), this).Y + targetElement.ActualHeight / 2));
+        e.Handled = true;
+    }
+
+    private void ProjectSessionDrag_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_isProjectSessionDragging)
+        {
+            FinishSidebarDrag(_projectSessionDragElement);
+            e.Handled = true;
+        }
+        _projectSessionDragSource = null;
+        _projectSessionDragOwner = null;
+        _projectSessionDragElement = null;
+    }
+
+    private void FinishSidebarDrag(FrameworkElement? element)
+    {
+        if (element is null) return;
+        if (element.IsMouseCaptured) element.ReleaseMouseCapture();
+        ViewModel.CommitSidebarOrder();
+        var restore = new DoubleAnimation(element.Opacity, 1, TimeSpan.FromMilliseconds(110)) { FillBehavior = FillBehavior.Stop };
+        restore.Completed += (_, _) => element.ClearValue(OpacityProperty);
+        element.BeginAnimation(OpacityProperty, restore);
+        _isProjectDragging = false;
+        _isProjectSessionDragging = false;
+    }
+
+    private static void AnimateItemsControlReorder(ItemsControl items, Func<bool> reorder)
+    {
+        var before = new Dictionary<object, double>();
+        for (var i = 0; i < items.Items.Count; i++)
+        {
+            if (items.ItemContainerGenerator.ContainerFromIndex(i) is FrameworkElement container)
+            {
+                before[items.Items[i]] = container.TranslatePoint(new Point(0, 0), items).Y;
+            }
+        }
+        if (!reorder()) return;
+        items.UpdateLayout();
+        for (var i = 0; i < items.Items.Count; i++)
+        {
+            if (!before.TryGetValue(items.Items[i], out var oldY)
+                || items.ItemContainerGenerator.ContainerFromIndex(i) is not FrameworkElement container) continue;
+            var newY = container.TranslatePoint(new Point(0, 0), items).Y;
+            var delta = oldY - newY;
+            if (Math.Abs(delta) < 0.5) continue;
+            var transform = new TranslateTransform(0, delta);
+            container.RenderTransform = transform;
+            transform.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(delta, 0, TimeSpan.FromMilliseconds(110)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+        }
+    }
+
+    private static FrameworkElement? FindVisualAncestorByName(DependencyObject? source, string name)
+    {
+        var current = source;
+        while (current is not null)
+        {
+            if (current is FrameworkElement { Name: var currentName } element && currentName == name) return element;
+            current = VisualTreeHelper.GetParent(current);
+        }
+        return null;
+    }
+
     private void OpenActiveLocation_Click(object sender, RoutedEventArgs e)
     {
         var path = ViewModel.ActiveLocationPath;
@@ -2581,6 +2765,21 @@ public partial class MainWindow
     private void ToolApprovalDeny_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button { DataContext: ToolApprovalRequestItem item }) ViewModel.ResolveToolApproval(item, ToolApprovalDecisionKind.Deny);
+    }
+
+    private void ToolApprovalGuide_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: ToolApprovalRequestItem item } && item.CanSendGuidance)
+        {
+            ViewModel.ResolveToolApproval(item, ToolApprovalDecisionKind.Guide);
+        }
+    }
+
+    private void ToolApprovalGuidance_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || sender is not TextBox { DataContext: ToolApprovalRequestItem item } || !item.CanSendGuidance) return;
+        e.Handled = true;
+        ViewModel.ResolveToolApproval(item, ToolApprovalDecisionKind.Guide);
     }
 
     private async void Voice_Click(object sender, RoutedEventArgs e)
