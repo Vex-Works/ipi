@@ -269,6 +269,54 @@ public sealed class PiAgentBridgeService
         return providers;
     }
 
+    public async Task LoginOAuthAsync(string providerId, string cwd, string agentDir, Action<string> onStatus, Action<string> onAuthUrl, CancellationToken cancellationToken = default)
+    {
+        var bridgePath = Path.Combine(AppContext.BaseDirectory, "agent-bridge.mjs");
+        if (!File.Exists(bridgePath)) throw new FileNotFoundException("ipi agent bridge was not copied to the output directory", bridgePath);
+        var workingDirectory = Directory.Exists(cwd) ? cwd : AppContext.BaseDirectory;
+        var runtime = ResolveBridgeRuntime();
+        var psi = new ProcessStartInfo
+        {
+            FileName = runtime.NodeCommand, WorkingDirectory = workingDirectory,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false, CreateNoWindow = true, StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
+        };
+        psi.ArgumentList.Add(bridgePath);
+        ConfigureBridgeEnvironment(psi);
+
+        using var process = new Process { StartInfo = psi };
+        if (!process.Start()) throw new InvalidOperationException("failed to start OAuth bridge");
+        using var cancellationRegistration = cancellationToken.Register(() => { try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { } });
+        await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new { cwd = workingDirectory, agentDir, piCodingAgentRoot = runtime.PiCodingAgentRoot, command = "oauth_login", oauthProvider = providerId, message = "" }));
+        process.StandardInput.Close();
+
+        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        var bridgeError = "";
+        while (await process.StandardOutput.ReadLineAsync(cancellationToken) is { } line)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(line);
+                var root = document.RootElement;
+                switch (GetString(root, "type"))
+                {
+                    case "oauth_status": onStatus(GetString(root, "message")); break;
+                    case "oauth_auth_url": onAuthUrl(GetString(root, "url")); break;
+                    case "error": bridgeError = GetString(root, "message"); break;
+                }
+            }
+            catch (JsonException) { }
+        }
+
+        await process.WaitForExitAsync(cancellationToken);
+        var stderr = await stderrTask;
+        if (process.ExitCode != 0)
+        {
+            var detail = BridgeFailureDetail(stderr, bridgeError);
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(detail) ? "Subscription sign-in failed" : detail);
+        }
+    }
+
     private static (string NodeCommand, string PiCodingAgentRoot) ResolveBridgeRuntime()
     {
         var runtime = new PiRuntimeService().Resolve();

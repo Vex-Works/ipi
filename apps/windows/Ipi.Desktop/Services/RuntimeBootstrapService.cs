@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.ComponentModel;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
@@ -42,6 +43,7 @@ public sealed class RuntimeBootstrapService
 
     private static readonly Version MinimumNodeVersion = new(22, 19, 0);
     private static readonly TimeSpan NpmInstallTimeout = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan NodeDownloadTimeout = TimeSpan.FromMinutes(2);
     private readonly string _appDataDir = IpiPathService.AppDataDir;
     private readonly string _localAppDataDir = IpiPathService.LocalAppDataDir;
 
@@ -294,6 +296,12 @@ public sealed class RuntimeBootstrapService
             var version = new Version(int.Parse(match.Groups[1].Value), int.Parse(match.Groups[2].Value), int.Parse(match.Groups[3].Value));
             return new NodeCheck(command, $"{command} · {output}", version >= MinimumNodeVersion);
         }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 2 && !Path.IsPathFullyQualified(command))
+        {
+            // A missing PATH Node is normal on a clean Windows install. Treat it as the
+            // expected bootstrap case instead of surfacing the low-level process error.
+            return new NodeCheck(command, $"{command} · not installed (portable Node.js will be downloaded)", false);
+        }
         catch (Exception ex)
         {
             return new NodeCheck(command, $"{command} · {ex.Message}", false);
@@ -311,9 +319,26 @@ public sealed class RuntimeBootstrapService
         var zipPath = GetValidatedManagedPath(Path.Combine(downloadDir, NodeArchiveName));
         var shasumsPath = GetValidatedManagedPath(Path.Combine(downloadDir, "SHASUMS256.txt"));
 
-        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-        await DownloadAsync(http, NodeDownloadUrl, zipPath, cancellationToken);
-        await DownloadAsync(http, NodeShasumsUrl, shasumsPath, cancellationToken);
+        using var http = new HttpClient { Timeout = NodeDownloadTimeout };
+        try
+        {
+            log("Connecting to nodejs.org to download portable Node.js…");
+            await DownloadAsync(http, NodeDownloadUrl, zipPath, cancellationToken);
+            log("Node.js archive downloaded. Downloading its checksum manifest…");
+            await DownloadAsync(http, NodeShasumsUrl, shasumsPath, cancellationToken);
+        }
+        catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new InvalidOperationException(
+                $"Downloading portable Node.js from nodejs.org timed out after {NodeDownloadTimeout.TotalMinutes:0} minutes. Check your connection, proxy, or firewall, then retry.",
+                ex);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new InvalidOperationException(
+                "Unable to download portable Node.js from nodejs.org. Check your connection, proxy, or firewall, then retry.",
+                ex);
+        }
         GetValidatedManagedPath(zipPath);
         GetValidatedManagedPath(shasumsPath);
         VerifyNodeArchiveSha256(zipPath, shasumsPath);

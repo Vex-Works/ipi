@@ -549,9 +549,9 @@ public partial class SettingsWindow
         if (DataContext is SettingsWindowViewModel viewModel) viewModel.StartAddProvider();
     }
 
-    private void ProviderTemplate_Click(object sender, RoutedEventArgs e)
+    private async void ProviderTemplate_Click(object sender, RoutedEventArgs e)
     {
-        if (DataContext is SettingsWindowViewModel viewModel && sender is Button { DataContext: ProviderTemplateItem item }) viewModel.SelectProviderTemplate(item);
+        if (DataContext is SettingsWindowViewModel viewModel && sender is Button { DataContext: ProviderTemplateItem item }) await viewModel.SelectProviderTemplateAsync(item);
     }
 
     private void CancelAddProvider_Click(object sender, RoutedEventArgs e)

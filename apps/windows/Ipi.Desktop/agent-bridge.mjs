@@ -174,6 +174,25 @@ async function main() {
     return;
   }
 
+  if (command === 'oauth_login') {
+    const oauthProvider = typeof input.oauthProvider === 'string' ? input.oauthProvider.trim() : '';
+    const supportedOAuthProviders = new Set(['anthropic', 'openai-codex', 'github-copilot']);
+    if (!supportedOAuthProviders.has(oauthProvider)) {
+      throw new Error(`Unsupported Pi subscription provider: ${oauthProvider || '(missing)'}`);
+    }
+    const authStorage = AuthStorage.create(path.join(resolvedAgentDir, 'auth.json'));
+    emit({ type: 'oauth_status', message: 'Preparing subscription sign-in…' });
+    await authStorage.login(oauthProvider, {
+      onAuth: ({ url }) => emit({ type: 'oauth_auth_url', url }),
+      onDeviceCode: ({ userCode, verificationUri }) => emit({ type: 'oauth_status', message: `Open ${verificationUri} and enter code ${userCode}.` }),
+      onPrompt: async ({ message }) => { throw new Error(`Subscription sign-in needs browser confirmation: ${message}`); },
+      onSelect: async ({ options }) => options?.[0]?.id,
+    });
+    emit({ type: 'oauth_complete', provider: oauthProvider });
+    inputLines.close();
+    return;
+  }
+
   const sessionManager = input.sessionFile
     ? SessionManager.open(input.sessionFile, undefined)
     : SessionManager.create(cwd, undefined);

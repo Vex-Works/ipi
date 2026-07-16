@@ -399,7 +399,7 @@
           </Border>
 
           <Grid Grid.Row="2" Visibility="{Binding ProviderGalleryVisibility}">
-            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="260" /></Grid.RowDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="260" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
             <Border Height="36" Background="#F7F9FD" BorderBrush="{StaticResource SetupSoftLine}" BorderThickness="1" CornerRadius="9" Padding="12,0" Margin="0,0,0,12">
               <Grid>
                 <StackPanel Orientation="Horizontal" IsHitTestVisible="False" VerticalAlignment="Center">
@@ -435,6 +435,7 @@
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
             </ScrollViewer>
+            <TextBlock Grid.Row="2" Text="{Binding ProviderStatus}" Foreground="{StaticResource SetupMuted}" FontSize="12" TextWrapping="Wrap" Margin="2,10,2,0" Visibility="{Binding ProviderStatusVisibility}" AutomationProperties.Name="Provider status" AutomationProperties.LiveSetting="Assertive" />
           </Grid>
 
           <ScrollViewer Grid.Row="2" Visibility="{Binding ProviderConfigVisibility}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" CanContentScroll="False">

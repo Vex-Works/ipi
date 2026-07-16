@@ -154,11 +154,11 @@ public partial class SetupPreviewWindow
         }
     }
 
-    private void ProviderOption_Click(object sender, RoutedEventArgs e)
+    private async void ProviderOption_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: SetupProviderOptionItem item })
         {
-            _viewModel.SelectProviderOption(item);
+            await _viewModel.SelectProviderOptionAsync(item);
             FocusProviderContent();
         }
     }
@@ -490,7 +490,7 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
         NotifyProviderStateChanged();
     }
 
-    public void SelectProviderOption(SetupProviderOptionItem item)
+    public async Task SelectProviderOptionAsync(SetupProviderOptionItem item)
     {
         _selectedProviderOption = item;
         foreach (var option in ProviderOptions) option.IsSelected = option.Key == item.Key;
@@ -501,6 +501,29 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
             _connectedProviderDetail = item.Detail;
             ProviderStatus = "Provider is already configured.";
             _isProviderConfigVisible = false;
+            NotifyProviderStateChanged();
+            return;
+        }
+
+        if (item.RequiresOAuthLogin)
+        {
+            _isProviderConfigVisible = false;
+            ProviderStatus = $"Opening {item.Title} sign-in in your browser...";
+            NotifyProviderStateChanged();
+            try
+            {
+                await _bridge.LoginOAuthAsync(item.ProviderId, Environment.CurrentDirectory, _pi.AgentDir, status => ProviderStatus = status, url => OpenOAuthBrowser(item.ProviderId, url));
+                _providerCatalog.Clear();
+                _providerCatalog.AddRange(await _bridge.ListProviderCatalogAsync(Environment.CurrentDirectory, _pi.AgentDir));
+                _registryModels.Clear();
+                _registryModels.AddRange(await _bridge.ListModelsAsync(Environment.CurrentDirectory, _pi.AgentDir));
+                RefreshProviderState();
+                ProviderStatus = $"{item.Title} is connected. Choose a model and start ipi.";
+            }
+            catch (Exception ex)
+            {
+                ProviderStatus = $"{item.Title} sign-in did not finish: {ex.Message}";
+            }
             NotifyProviderStateChanged();
             return;
         }
@@ -537,6 +560,7 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
             ProviderStatus = "Remote Base URLs must use HTTPS. HTTP is loopback-only, and credentials must not be embedded in the URL.";
             return;
         }
+
         if (string.IsNullOrWhiteSpace(NewProviderApi))
         {
             ProviderStatus = "API type is required.";
@@ -975,6 +999,9 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
         }
 
         ProviderOptions.Clear();
+        AddSubscriptionProviderOption("anthropic", "Claude Pro/Max (OAuth)", "Sign in with Claude to connect your subscription");
+        AddSubscriptionProviderOption("openai-codex", "ChatGPT Plus/Pro (OAuth)", "Sign in with ChatGPT to connect your subscription");
+        AddSubscriptionProviderOption("github-copilot", "GitHub Copilot (OAuth)", "Sign in with GitHub to connect your subscription");
         foreach (var group in configuredGroups)
         {
             var first = group.First();
@@ -1008,13 +1035,15 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
 
         var configuredProviderIds = configuredGroups.Select(group => group.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var provider in _providerCatalog
-            .Where(item => !string.IsNullOrWhiteSpace(item.Provider) && !configuredProviderIds.Contains(item.Provider))
+            .Where(item => !string.IsNullOrWhiteSpace(item.Provider)
+                           && !IsSubscriptionOAuthProvider(item.Provider)
+                           && !configuredProviderIds.Contains(item.Provider))
             .OrderBy(item => CleanProviderName(item.DisplayName), StringComparer.OrdinalIgnoreCase))
         {
             ProviderOptions.Add(new SetupProviderOptionItem(
                 $"catalog:{provider.Provider}",
                 ProviderCategory(provider),
-                CleanProviderName(provider.DisplayName),
+                ProviderDisplayTitle(provider.Provider, provider.DisplayName),
                 ProviderCatalogDetail(provider),
                 provider.Provider,
                 provider.BaseUrl,
@@ -1027,6 +1056,43 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
 
         RebuildFilteredProviderOptions();
         NotifyProviderStateChanged();
+    }
+
+    private void AddSubscriptionProviderOption(string providerId, string title, string signInDetail)
+    {
+        var provider = _providerCatalog.FirstOrDefault(item => item.Provider.Equals(providerId, StringComparison.OrdinalIgnoreCase));
+        ProviderOptions.Add(new SetupProviderOptionItem(
+            providerId, "SUBSCRIPTION", title,
+            provider?.IsConfigured == true ? $"connected via {title}" : signInDetail,
+            providerId, "", "", "", "", provider?.IsConfigured == true, true, true));
+    }
+
+    private static bool IsSubscriptionOAuthProvider(string providerId)
+        => providerId.Equals("anthropic", StringComparison.OrdinalIgnoreCase)
+           || providerId.Equals("openai-codex", StringComparison.OrdinalIgnoreCase)
+           || providerId.Equals("github-copilot", StringComparison.OrdinalIgnoreCase);
+
+    private static void OpenOAuthBrowser(string providerId, string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            || !uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+            || !IsExpectedOAuthHost(providerId, uri.Host))
+        {
+            throw new InvalidOperationException("Subscription sign-in returned an unexpected authorization URL.");
+        }
+        Process.Start(new ProcessStartInfo { FileName = uri.AbsoluteUri, UseShellExecute = true });
+    }
+
+    private static bool IsExpectedOAuthHost(string providerId, string host)
+    {
+        var roots = providerId switch
+        {
+            "anthropic" => new[] { "anthropic.com", "claude.ai" },
+            "openai-codex" => new[] { "openai.com", "chatgpt.com" },
+            "github-copilot" => new[] { "github.com" },
+            _ => Array.Empty<string>(),
+        };
+        return roots.Any(root => host.Equals(root, StringComparison.OrdinalIgnoreCase) || host.EndsWith($".{root}", StringComparison.OrdinalIgnoreCase));
     }
 
     private void RebuildFilteredProviderOptions()
@@ -1150,13 +1216,37 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
 
     private static string ProviderCatalogDetail(PiProviderCatalogRecord provider)
     {
-        var auth = provider.IsConfigured ? "configured" : ProviderCategory(provider).ToLowerInvariant();
-        return provider.ModelCount > 0 ? $"{provider.ModelCount} models · {auth}" : auth;
+        if (provider.IsConfigured) return provider.ModelCount > 0 ? $"{provider.ModelCount} models · configured" : "configured";
+        var models = provider.ModelCount > 0 ? $"{provider.ModelCount} models · " : "";
+        return models + "Connect to use this provider";
     }
 
     private static string CleanProviderName(string name)
         => name.Replace(" (Codex Subscription)", "", StringComparison.OrdinalIgnoreCase)
             .Replace(" (Claude Pro/Max)", "", StringComparison.OrdinalIgnoreCase);
+
+    private static string ProviderDisplayTitle(string provider, string displayName)
+    {
+        var name = provider.ToLowerInvariant() switch
+        {
+            "amazon-bedrock" => "Amazon Bedrock",
+            "azure-openai-responses" => "Azure OpenAI",
+            "cloudflare-ai-gateway" => "Cloudflare AI Gateway",
+            "cloudflare-workers-ai" => "Cloudflare Workers AI",
+            "google-vertex" => "Google Vertex AI",
+            "huggingface" => "Hugging Face",
+            "xai" => "xAI",
+            _ => CleanProviderName(displayName),
+        };
+        return $"{name} ({ProviderAuthenticationLabel(provider)})";
+    }
+
+    private static string ProviderAuthenticationLabel(string provider) => provider.ToLowerInvariant() switch
+    {
+        "amazon-bedrock" => "AWS credentials",
+        "google-vertex" => "Google sign-in",
+        _ => "API key",
+    };
 
     private static string FriendlyProviderTitle(string provider, string? displayName)
     {
@@ -1170,9 +1260,54 @@ public sealed class SetupPreviewViewModel : INotifyPropertyChanged
 
     private static string DefaultApiKeyRef(string provider)
     {
+        var known = provider.ToLowerInvariant() switch
+        {
+            "anthropic" => "$ANTHROPIC_API_KEY",
+            "ant-ling" => "$ANT_LING_API_KEY",
+            "azure-openai-responses" => "$AZURE_OPENAI_API_KEY",
+            "openai" => "$OPENAI_API_KEY",
+            "deepseek" => "$DEEPSEEK_API_KEY",
+            "nvidia" => "$NVIDIA_API_KEY",
+            "google" => "$GEMINI_API_KEY",
+            "google-vertex" => "$GOOGLE_APPLICATION_CREDENTIALS",
+            "amazon-bedrock" => "$AWS_BEARER_TOKEN_BEDROCK",
+            "mistral" => "$MISTRAL_API_KEY",
+            "groq" => "$GROQ_API_KEY",
+            "cerebras" => "$CEREBRAS_API_KEY",
+            "cloudflare-ai-gateway" or "cloudflare-workers-ai" => "$CLOUDFLARE_API_KEY",
+            "xai" => "$XAI_API_KEY",
+            "openrouter" => "$OPENROUTER_API_KEY",
+            "vercel-ai-gateway" => "$AI_GATEWAY_API_KEY",
+            "zai" => "$ZAI_API_KEY",
+            "zai-coding-cn" => "$ZAI_CODING_CN_API_KEY",
+            "opencode" or "opencode-go" => "$OPENCODE_API_KEY",
+            "radius" => "$RADIUS_API_KEY",
+            "huggingface" => "$HF_TOKEN",
+            "fireworks" => "$FIREWORKS_API_KEY",
+            "together" => "$TOGETHER_API_KEY",
+            "kimi-coding" => "$KIMI_API_KEY",
+            "minimax" => "$MINIMAX_API_KEY",
+            "minimax-cn" => "$MINIMAX_CN_API_KEY",
+            "xiaomi" => "$XIAOMI_API_KEY",
+            "xiaomi-token-plan-cn" => "$XIAOMI_TOKEN_PLAN_CN_API_KEY",
+            "xiaomi-token-plan-ams" => "$XIAOMI_TOKEN_PLAN_AMS_API_KEY",
+            "xiaomi-token-plan-sgp" => "$XIAOMI_TOKEN_PLAN_SGP_API_KEY",
+            _ => "",
+        };
+        if (!string.IsNullOrWhiteSpace(known)) return known;
         var normalized = Regex.Replace(provider.ToUpperInvariant(), "[^A-Z0-9]+", "_").Trim('_');
         return string.IsNullOrWhiteSpace(normalized) ? "$API_KEY" : $"${normalized}_API_KEY";
     }
+
+    private static string ProviderConfigurationHint(string provider) => provider.ToLowerInvariant() switch
+    {
+        "amazon-bedrock" => "AWS credentials or AWS_BEARER_TOKEN_BEDROCK",
+        "azure-openai-responses" => "AZURE_OPENAI_API_KEY + base URL/resource",
+        "cloudflare-ai-gateway" => "CLOUDFLARE_API_KEY + account ID + gateway ID",
+        "cloudflare-workers-ai" => "CLOUDFLARE_API_KEY + account ID",
+        "google-vertex" => "Google Application Default Credentials",
+        _ => DefaultApiKeyRef(provider).TrimStart('$'),
+    };
 
     private static bool TryValidateProviderEndpoint(string value, out Uri? endpoint)
     {
@@ -1261,7 +1396,8 @@ public sealed class SetupProviderOptionItem : INotifyPropertyChanged
         string apiKeyRef,
         string modelIds,
         bool isConfigured,
-        bool isCatalogProvider)
+        bool isCatalogProvider,
+        bool requiresOAuthLogin = false)
     {
         Key = key;
         Category = category;
@@ -1274,6 +1410,7 @@ public sealed class SetupProviderOptionItem : INotifyPropertyChanged
         ModelIds = modelIds;
         IsConfigured = isConfigured;
         IsCatalogProvider = isCatalogProvider;
+        RequiresOAuthLogin = requiresOAuthLogin;
     }
 
     public string Key { get; }
@@ -1287,6 +1424,7 @@ public sealed class SetupProviderOptionItem : INotifyPropertyChanged
     public string ModelIds { get; }
     public bool IsConfigured { get; }
     public bool IsCatalogProvider { get; }
+    public bool RequiresOAuthLogin { get; }
     public bool IsSelected
     {
         get => _isSelected;

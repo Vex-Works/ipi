@@ -1224,10 +1224,31 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
         NotifyModelPageStateChanged();
     }
 
-    public void SelectProviderTemplate(ProviderTemplateItem template)
+    public async Task SelectProviderTemplateAsync(ProviderTemplateItem template)
     {
         _selectedProviderTemplate = template;
         foreach (var item in ProviderTemplates) item.IsSelected = item.Key == template.Key;
+        if (template.RequiresOAuthLogin)
+        {
+            _isProviderConfigVisible = false;
+            NewProviderStatus = $"Opening {template.Title} sign-in in your browser...";
+            NotifyModelPageStateChanged();
+            try
+            {
+                await _bridge.LoginOAuthAsync(template.ProviderId, Environment.CurrentDirectory, _pi.AgentDir, status => NewProviderStatus = status, url => OpenOAuthBrowser(template.ProviderId, url));
+                _providerCatalog.Clear();
+                _providerCatalog.AddRange(await _bridge.ListProviderCatalogAsync(Environment.CurrentDirectory, _pi.AgentDir));
+                RebuildProviderTemplatesFromCatalog();
+                RefreshProviderTemplateLabels();
+                NewProviderStatus = $"{template.Title} is connected.";
+            }
+            catch (Exception ex)
+            {
+                NewProviderStatus = $"{template.Title} sign-in did not finish: {ex.Message}";
+            }
+            NotifyModelPageStateChanged();
+            return;
+        }
         NewProviderId = template.ProviderId;
         NewProviderBaseUrl = template.BaseUrl;
         NewProviderApi = template.Api;
@@ -1392,6 +1413,9 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
             "自定义端点格式", "Custom endpoint format",
             "custom-openai", "https://api.example.com/v1", "openai-completions", "$CUSTOM_OPENAI_API_KEY", "model-id",
             0, false, false));
+        AddSubscriptionProviderTemplate("anthropic", "Claude Pro/Max (OAuth)", "Sign in with Claude to connect your subscription");
+        AddSubscriptionProviderTemplate("openai-codex", "ChatGPT Plus/Pro (OAuth)", "Sign in with ChatGPT to connect your subscription");
+        AddSubscriptionProviderTemplate("github-copilot", "GitHub Copilot (OAuth)", "Sign in with GitHub to connect your subscription");
         RebuildProviderTemplatesFromCatalog();
         RefreshProviderTemplateLabels();
         RebuildFilteredProviderTemplates();
@@ -1422,17 +1446,20 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
         var custom = ProviderTemplates.Where(item => !item.IsCatalogProvider).ToList();
         ProviderTemplates.Clear();
         foreach (var item in custom) ProviderTemplates.Add(item);
+        AddSubscriptionProviderTemplate("anthropic", "Claude Pro/Max (OAuth)", "Sign in with Claude to connect your subscription");
+        AddSubscriptionProviderTemplate("openai-codex", "ChatGPT Plus/Pro (OAuth)", "Sign in with ChatGPT to connect your subscription");
+        AddSubscriptionProviderTemplate("github-copilot", "GitHub Copilot (OAuth)", "Sign in with GitHub to connect your subscription");
 
         foreach (var provider in _providerCatalog
             .Where(item => !string.IsNullOrWhiteSpace(item.Provider))
             .OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase))
         {
-            if (provider.Provider.Equals("openai-codex", StringComparison.OrdinalIgnoreCase) && provider.IsConfigured) continue;
+            if (IsSubscriptionOAuthProvider(provider.Provider)) continue;
             var category = ProviderCategory(provider);
             ProviderTemplates.Add(new ProviderTemplateItem(
                 provider.Provider,
                 category,
-                CleanProviderName(provider.DisplayName),
+                ProviderDisplayTitle(provider.Provider, provider.DisplayName),
                 ProviderDetail(provider, false),
                 ProviderDetail(provider, true),
                 provider.Provider,
@@ -1460,6 +1487,44 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
         PackageScopeOptions.Clear();
         PackageScopeOptions.Add(new("global", Language == "en-US" ? "Global" : "全局"));
         PackageInstallScope = "global";
+    }
+
+    private void AddSubscriptionProviderTemplate(string providerId, string title, string detail)
+    {
+        var provider = _providerCatalog.FirstOrDefault(item => item.Provider.Equals(providerId, StringComparison.OrdinalIgnoreCase));
+        ProviderTemplates.Add(new ProviderTemplateItem(
+            providerId, "SUBSCRIPTION", title,
+            provider?.IsConfigured == true ? $"connected via {title}" : detail,
+            provider?.IsConfigured == true ? $"connected via {title}" : detail,
+            providerId, "", "", "", "", provider?.ModelCount ?? 0, provider?.IsConfigured == true, true, true));
+    }
+
+    private static bool IsSubscriptionOAuthProvider(string providerId)
+        => providerId.Equals("anthropic", StringComparison.OrdinalIgnoreCase)
+           || providerId.Equals("openai-codex", StringComparison.OrdinalIgnoreCase)
+           || providerId.Equals("github-copilot", StringComparison.OrdinalIgnoreCase);
+
+    private static void OpenOAuthBrowser(string providerId, string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            || !uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+            || !IsExpectedOAuthHost(providerId, uri.Host))
+        {
+            throw new InvalidOperationException("Subscription sign-in returned an unexpected authorization URL.");
+        }
+        Process.Start(new ProcessStartInfo { FileName = uri.AbsoluteUri, UseShellExecute = true });
+    }
+
+    private static bool IsExpectedOAuthHost(string providerId, string host)
+    {
+        var roots = providerId switch
+        {
+            "anthropic" => new[] { "anthropic.com", "claude.ai" },
+            "openai-codex" => new[] { "openai.com", "chatgpt.com" },
+            "github-copilot" => new[] { "github.com" },
+            _ => Array.Empty<string>(),
+        };
+        return roots.Any(root => host.Equals(root, StringComparison.OrdinalIgnoreCase) || host.EndsWith($".{root}", StringComparison.OrdinalIgnoreCase));
     }
 
     private void RebuildFilteredProviderTemplates()
@@ -1511,20 +1576,87 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
 
     private string ProviderDetail(PiProviderCatalogRecord provider, bool english)
     {
-        if (provider.Provider.Equals("github-copilot", StringComparison.OrdinalIgnoreCase)) return "OAuth";
         if (provider.IsConfigured) return english ? $"{provider.ModelCount} models · configured" : $"{provider.ModelCount} 个模型 · 已配置";
-        return english ? $"{provider.ModelCount} models" : $"{provider.ModelCount} 个模型";
+        return provider.ModelCount > 0 ? $"{provider.ModelCount} models · connect to use" : "Connect to use this provider";
     }
 
     private static string CleanProviderName(string name)
         => name.Replace(" (Codex Subscription)", "", StringComparison.OrdinalIgnoreCase)
             .Replace(" (Claude Pro/Max)", "", StringComparison.OrdinalIgnoreCase);
 
+    private static string ProviderDisplayTitle(string provider, string displayName)
+    {
+        var name = provider.ToLowerInvariant() switch
+        {
+            "amazon-bedrock" => "Amazon Bedrock",
+            "azure-openai-responses" => "Azure OpenAI",
+            "cloudflare-ai-gateway" => "Cloudflare AI Gateway",
+            "cloudflare-workers-ai" => "Cloudflare Workers AI",
+            "google-vertex" => "Google Vertex AI",
+            "huggingface" => "Hugging Face",
+            "xai" => "xAI",
+            _ => CleanProviderName(displayName),
+        };
+        return $"{name} ({ProviderAuthenticationLabel(provider)})";
+    }
+
+    private static string ProviderAuthenticationLabel(string provider) => provider.ToLowerInvariant() switch
+    {
+        "amazon-bedrock" => "AWS credentials",
+        "google-vertex" => "Google sign-in",
+        _ => "API key",
+    };
+
     private static string DefaultApiKeyRef(string provider)
     {
+        var known = provider.ToLowerInvariant() switch
+        {
+            "anthropic" => "$ANTHROPIC_API_KEY",
+            "ant-ling" => "$ANT_LING_API_KEY",
+            "azure-openai-responses" => "$AZURE_OPENAI_API_KEY",
+            "openai" => "$OPENAI_API_KEY",
+            "deepseek" => "$DEEPSEEK_API_KEY",
+            "nvidia" => "$NVIDIA_API_KEY",
+            "google" => "$GEMINI_API_KEY",
+            "google-vertex" => "$GOOGLE_APPLICATION_CREDENTIALS",
+            "amazon-bedrock" => "$AWS_BEARER_TOKEN_BEDROCK",
+            "mistral" => "$MISTRAL_API_KEY",
+            "groq" => "$GROQ_API_KEY",
+            "cerebras" => "$CEREBRAS_API_KEY",
+            "cloudflare-ai-gateway" or "cloudflare-workers-ai" => "$CLOUDFLARE_API_KEY",
+            "xai" => "$XAI_API_KEY",
+            "openrouter" => "$OPENROUTER_API_KEY",
+            "vercel-ai-gateway" => "$AI_GATEWAY_API_KEY",
+            "zai" => "$ZAI_API_KEY",
+            "zai-coding-cn" => "$ZAI_CODING_CN_API_KEY",
+            "opencode" or "opencode-go" => "$OPENCODE_API_KEY",
+            "radius" => "$RADIUS_API_KEY",
+            "huggingface" => "$HF_TOKEN",
+            "fireworks" => "$FIREWORKS_API_KEY",
+            "together" => "$TOGETHER_API_KEY",
+            "kimi-coding" => "$KIMI_API_KEY",
+            "minimax" => "$MINIMAX_API_KEY",
+            "minimax-cn" => "$MINIMAX_CN_API_KEY",
+            "xiaomi" => "$XIAOMI_API_KEY",
+            "xiaomi-token-plan-cn" => "$XIAOMI_TOKEN_PLAN_CN_API_KEY",
+            "xiaomi-token-plan-ams" => "$XIAOMI_TOKEN_PLAN_AMS_API_KEY",
+            "xiaomi-token-plan-sgp" => "$XIAOMI_TOKEN_PLAN_SGP_API_KEY",
+            _ => "",
+        };
+        if (!string.IsNullOrWhiteSpace(known)) return known;
         var normalized = Regex.Replace(provider.ToUpperInvariant(), "[^A-Z0-9]+", "_").Trim('_');
         return string.IsNullOrWhiteSpace(normalized) ? "$API_KEY" : $"${normalized}_API_KEY";
     }
+
+    private static string ProviderConfigurationHint(string provider) => provider.ToLowerInvariant() switch
+    {
+        "amazon-bedrock" => "AWS credentials or AWS_BEARER_TOKEN_BEDROCK",
+        "azure-openai-responses" => "AZURE_OPENAI_API_KEY + base URL/resource",
+        "cloudflare-ai-gateway" => "CLOUDFLARE_API_KEY + account ID + gateway ID",
+        "cloudflare-workers-ai" => "CLOUDFLARE_API_KEY + account ID",
+        "google-vertex" => "Google Application Default Credentials",
+        _ => DefaultApiKeyRef(provider).TrimStart('$'),
+    };
 
     private async Task LoadRegistryModelsAsync()
     {
@@ -1779,7 +1911,8 @@ public sealed class ProviderTemplateItem : INotifyPropertyChanged
         string modelIds,
         int modelCount,
         bool isConfigured,
-        bool isCatalogProvider)
+        bool isCatalogProvider,
+        bool requiresOAuthLogin = false)
     {
         Key = key;
         Category = category;
@@ -1794,6 +1927,7 @@ public sealed class ProviderTemplateItem : INotifyPropertyChanged
         ModelCount = modelCount;
         IsConfigured = isConfigured;
         IsCatalogProvider = isCatalogProvider;
+        RequiresOAuthLogin = requiresOAuthLogin;
         Badge = category == "CUSTOM" ? "+" : BuildBadge(title);
     }
 
@@ -1811,6 +1945,7 @@ public sealed class ProviderTemplateItem : INotifyPropertyChanged
     public int ModelCount { get; }
     public bool IsConfigured { get; }
     public bool IsCatalogProvider { get; }
+    public bool RequiresOAuthLogin { get; }
     public string Badge { get; }
     public bool ShowPlus => !IsConfigured;
     public bool IsSelected
