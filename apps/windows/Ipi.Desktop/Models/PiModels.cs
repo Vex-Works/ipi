@@ -41,7 +41,8 @@ public sealed record PiModelOptionRecord(
     string DisplayName,
     string Source,
     bool IsConfigured,
-    string ProviderDisplayName = ""
+    string ProviderDisplayName = "",
+    IReadOnlyList<string>? ThinkingLevels = null
 );
 
 public sealed record PiProviderCatalogRecord(

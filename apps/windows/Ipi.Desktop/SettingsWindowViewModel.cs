@@ -1244,7 +1244,7 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
             }
             catch (Exception ex)
             {
-                NewProviderStatus = $"{template.Title} sign-in did not finish: {ex.Message}";
+                NewProviderStatus = DescribeOAuthFailure(template, ex);
             }
             NotifyModelPageStateChanged();
             return;
@@ -1503,6 +1503,17 @@ public sealed class SettingsWindowViewModel : INotifyPropertyChanged, IDisposabl
         => providerId.Equals("anthropic", StringComparison.OrdinalIgnoreCase)
            || providerId.Equals("openai-codex", StringComparison.OrdinalIgnoreCase)
            || providerId.Equals("github-copilot", StringComparison.OrdinalIgnoreCase);
+
+    private static string DescribeOAuthFailure(ProviderTemplateItem template, Exception exception)
+    {
+        var detail = exception.ToString();
+        if (template.ProviderId.Equals("openai-codex", StringComparison.OrdinalIgnoreCase)
+            && detail.Contains("unsupported_country_region_territory", StringComparison.OrdinalIgnoreCase))
+        {
+            return "ChatGPT Codex sign-in is not available from your current country, region, or territory. Choose another provider, or configure one later.";
+        }
+        return $"{template.Title} could not be connected. Choose another provider, or configure one later.";
+    }
 
     private static void OpenOAuthBrowser(string providerId, string url)
     {

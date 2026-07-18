@@ -160,6 +160,15 @@ async function main() {
       return;
     }
 
+    const supportedThinkingLevels = (model) => {
+      if (!model.reasoning) return [];
+      return ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].filter((level) => {
+        const mapped = model.thinkingLevelMap?.[level];
+        if (mapped === null) return false;
+        if (level === 'xhigh' || level === 'max') return mapped !== undefined;
+        return true;
+      });
+    };
     const models = modelRegistry.getAvailable().map((model) => ({
       provider: model.provider,
       model: model.id,
@@ -167,6 +176,7 @@ async function main() {
       source: 'Pi registry',
       isConfigured: true,
       contextWindow: typeof model.contextWindow === 'number' ? model.contextWindow : undefined,
+      thinkingLevels: supportedThinkingLevels(model),
       providerDisplayName: modelRegistry.getProviderDisplayName(model.provider) || model.provider,
     }));
     emit({ type: 'models', packageRoot: root, error: modelRegistry.getError?.() || '', models });

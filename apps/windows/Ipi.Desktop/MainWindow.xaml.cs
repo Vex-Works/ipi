@@ -522,6 +522,8 @@ public partial class MainWindow
             SetBrush("SelectionBrush", Color.FromRgb(75, 111, 234));
         }
 
+        ApplyThinkingAccent(settings, mode);
+
         if (settings.Theme == "broadsheet" && mode == "dark")
         {
             SetBrush("ComposerTextPrimary", Color.FromRgb(25, 37, 170));
@@ -558,6 +560,42 @@ public partial class MainWindow
         ApplySidebarScopedResources(settings, mode);
         ApplyTitleBarScopedResources(settings);
         ApplyBottomStatusScopedResources(settings);
+    }
+
+    private void ApplyThinkingAccent(AppearanceSettings settings, string mode)
+    {
+        if (settings.Theme == "broadsheet")
+        {
+            if (mode == "dark")
+            {
+                SetBrush("ThinkingAccent", Color.FromRgb(232, 230, 224));
+                SetBrush("ThinkingEnergyAccent", Color.FromRgb(255, 255, 255));
+            }
+            else
+            {
+                SetBrush("ThinkingAccent", Color.FromRgb(25, 37, 170));
+                SetBrush("ThinkingEnergyAccent", Color.FromRgb(109, 119, 222));
+            }
+            return;
+        }
+
+        if (settings.Theme == "candy-block")
+        {
+            SetBrush("ThinkingAccent", Color.FromRgb(255, 131, 218));
+            SetBrush("ThinkingEnergyAccent", Color.FromRgb(255, 197, 238));
+            return;
+        }
+
+        if (mode == "dark")
+        {
+            SetBrush("ThinkingAccent", Color.FromRgb(104, 128, 255));
+            SetBrush("ThinkingEnergyAccent", Color.FromRgb(229, 234, 255));
+        }
+        else
+        {
+            SetBrush("ThinkingAccent", Color.FromRgb(82, 112, 255));
+            SetBrush("ThinkingEnergyAccent", Color.FromRgb(220, 228, 255));
+        }
     }
 
     private void ApplyBottomStatusScopedResources(AppearanceSettings settings)
@@ -1304,7 +1342,7 @@ public partial class MainWindow
 
     private void SideBrowserWebView_NavigationCompleted(object? sender, Microsoft.Web.WebView2.Core.CoreWebView2NavigationCompletedEventArgs e)
     {
-        ViewModel.StatusText = e.IsSuccess ? $"browser loaded · {ViewModel.SideBrowserUrl}" : $"browser failed · {ViewModel.SideBrowserUrl}";
+        if (!e.IsSuccess) ViewModel.StatusText = $"browser failed · {ViewModel.SideBrowserUrl}";
     }
 
     private void RightPanelFile_Click(object sender, RoutedEventArgs e)
@@ -2321,6 +2359,15 @@ public partial class MainWindow
     {
         if (sender is Button { DataContext: ReasoningOptionItem option }) ViewModel.SelectReasoningOption(option);
     }
+
+    private void ThinkingSpectrumSlider_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        => ViewModel.SetThinkingSliderInteracting(true);
+
+    private void ThinkingSpectrumSlider_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        => ViewModel.SetThinkingSliderInteracting(false);
+
+    private void ThinkingSpectrumSlider_LostMouseCapture(object sender, MouseEventArgs e)
+        => ViewModel.SetThinkingSliderInteracting(false);
 
     private void HeroLogo_Loaded(object sender, RoutedEventArgs e) => RestartHeroLogoAnimation();
 

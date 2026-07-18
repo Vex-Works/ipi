@@ -864,6 +864,24 @@ public sealed class PiDataService
         catch { return ("unknown", "unknown", "unknown"); }
     }
 
+    public bool SetDefaultModelSelection(string provider, string model, string thinking)
+    {
+        if (string.IsNullOrWhiteSpace(provider) || string.IsNullOrWhiteSpace(model) || string.IsNullOrWhiteSpace(thinking)) return false;
+        try
+        {
+            var root = ReadSettingsRoot();
+            root["defaultProvider"] = provider;
+            root["defaultModel"] = model;
+            root["defaultThinkingLevel"] = thinking;
+            WriteSettingsRoot(root);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public IReadOnlyList<PiModelOptionRecord> ReadModelOptions((string DefaultProvider, string DefaultModel, string DefaultThinking) settings)
     {
         var results = new List<PiModelOptionRecord>();

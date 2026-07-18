@@ -189,7 +189,13 @@ public sealed class PiAgentBridgeService
                 var source = GetString(item, "source");
                 var providerDisplayName = GetString(item, "providerDisplayName");
                 var configured = !item.TryGetProperty("isConfigured", out var configuredElement) || configuredElement.ValueKind != JsonValueKind.False;
-                models.Add(new PiModelOptionRecord(provider, model, string.IsNullOrWhiteSpace(displayName) ? model : displayName, string.IsNullOrWhiteSpace(source) ? "Pi registry" : source, configured, providerDisplayName));
+                var thinkingLevels = item.TryGetProperty("thinkingLevels", out var thinkingElement) && thinkingElement.ValueKind == JsonValueKind.Array
+                    ? thinkingElement.EnumerateArray()
+                        .Where(level => level.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(level.GetString()))
+                        .Select(level => level.GetString()!)
+                        .ToList()
+                    : new List<string>();
+                models.Add(new PiModelOptionRecord(provider, model, string.IsNullOrWhiteSpace(displayName) ? model : displayName, string.IsNullOrWhiteSpace(source) ? "Pi registry" : source, configured, providerDisplayName, thinkingLevels));
             }
         }
         return models;

@@ -53,6 +53,8 @@
     <SolidColorBrush x:Key="FeedbackRowBorder" Color="#315E44" />
     <SolidColorBrush x:Key="FeedbackAccent" Color="#54C77A" />
     <SolidColorBrush x:Key="FeedbackSoftBg" Color="#202226" />
+    <SolidColorBrush x:Key="ThinkingAccent" Color="#617CFF" />
+    <SolidColorBrush x:Key="ThinkingEnergyAccent" Color="#E5EAFF" />
     <SolidColorBrush x:Key="Line" Color="#30343D" />
     <SolidColorBrush x:Key="ChatRailLine" Color="#30343D" />
     <SolidColorBrush x:Key="ChatScrollThumb" Color="#747B86" />
@@ -556,6 +558,81 @@
           <Setter Property="Foreground" Value="{DynamicResource SendButtonRunningIcon}" />
         </DataTrigger>
       </Style.Triggers>
+    </Style>
+
+    <Style x:Key="CodexThinkingSpectrumSlider" TargetType="Slider">
+      <Setter Property="Height" Value="36" />
+      <Setter Property="Focusable" Value="True" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Slider">
+            <Grid Height="36">
+              <Border Height="8" Margin="11,0" VerticalAlignment="Center" Background="#515258" CornerRadius="4" />
+              <Track x:Name="PART_Track" Margin="11,0" VerticalAlignment="Center"
+                     Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}"
+                     Value="{TemplateBinding Value}" IsDirectionReversed="False">
+                <Track.DecreaseRepeatButton>
+                  <RepeatButton Command="{x:Static Slider.DecreaseLarge}" Background="{DynamicResource ThinkingAccent}" BorderThickness="0" Focusable="False">
+                    <RepeatButton.Template>
+                      <ControlTemplate TargetType="RepeatButton">
+                        <Grid Height="8" ClipToBounds="True">
+                          <Border Background="{TemplateBinding Background}" CornerRadius="4" />
+                          <Border x:Name="EnergyBand" Width="104" HorizontalAlignment="Left" Background="{DynamicResource ThinkingEnergyAccent}" Opacity="0.56" CornerRadius="4">
+                            <Border.OpacityMask>
+                              <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                <GradientStop Color="#00000000" Offset="0" />
+                                <GradientStop Color="#FF000000" Offset="0.5" />
+                                <GradientStop Color="#00000000" Offset="1" />
+                              </LinearGradientBrush>
+                            </Border.OpacityMask>
+                            <Border.RenderTransform><TranslateTransform X="-80" /></Border.RenderTransform>
+                          </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                          <EventTrigger RoutedEvent="FrameworkElement.Loaded">
+                            <BeginStoryboard>
+                              <Storyboard RepeatBehavior="Forever">
+                                <DoubleAnimation Storyboard.TargetName="EnergyBand"
+                                                 Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)"
+                                                 From="-112" To="420" Duration="0:0:2.25"
+                                                 RepeatBehavior="Forever" />
+                                <DoubleAnimation Storyboard.TargetName="EnergyBand"
+                                                 Storyboard.TargetProperty="Opacity"
+                                                 From="0.42" To="0.76" Duration="0:0:0.72"
+                                                 AutoReverse="True" RepeatBehavior="Forever" />
+                              </Storyboard>
+                            </BeginStoryboard>
+                          </EventTrigger>
+                        </ControlTemplate.Triggers>
+                      </ControlTemplate>
+                    </RepeatButton.Template>
+                  </RepeatButton>
+                </Track.DecreaseRepeatButton>
+                <Track.IncreaseRepeatButton>
+                  <RepeatButton Command="{x:Static Slider.IncreaseLarge}" Background="Transparent" BorderThickness="0" Focusable="False">
+                    <RepeatButton.Template>
+                      <ControlTemplate TargetType="RepeatButton">
+                        <Border Height="8" Background="Transparent" CornerRadius="4" />
+                      </ControlTemplate>
+                    </RepeatButton.Template>
+                  </RepeatButton>
+                </Track.IncreaseRepeatButton>
+                <Track.Thumb>
+                  <Thumb Width="22" Height="22" Background="{DynamicResource PopupText}" BorderBrush="{DynamicResource ThinkingAccent}" BorderThickness="1">
+                    <Thumb.Template>
+                      <ControlTemplate TargetType="Thumb">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="11">
+                          <Border.Effect><DropShadowEffect BlurRadius="4" ShadowDepth="1" Opacity="0.18" /></Border.Effect>
+                        </Border>
+                      </ControlTemplate>
+                    </Thumb.Template>
+                  </Thumb>
+                </Track.Thumb>
+              </Track>
+            </Grid>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>
 
     <Style x:Key="ChatMessageTitleText" TargetType="TextBlock">
@@ -1459,6 +1536,21 @@
                 <Popup PlacementTarget="{Binding ElementName=MainThinkingPickerHost}" Placement="Top" VerticalOffset="-8" AllowsTransparency="True" StaysOpen="False" IsOpen="{Binding IsMainThinkingPickerOpen, Mode=TwoWay}" DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
                   <Border Width="344" Background="{DynamicResource PopupBg}" BorderBrush="{DynamicResource PopupBorder}" BorderThickness="1" CornerRadius="14" Padding="12,10">
                     <StackPanel>
+                      <StackPanel Visibility="{Binding GptSolThinkingSliderVisibility}">
+                        <Grid Margin="8,1,8,4" Visibility="{Binding ThinkingSpectrumIdleHeaderVisibility}">
+                          <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding ThinkingSpectrumIdleLabel}" Foreground="{DynamicResource TextMuted}" FontSize="14" FontWeight="Medium" />
+                            <local:LucideIcon Icon="chevron-right" Size="13" Stroke="{DynamicResource TextMuted}" Margin="5,1,0,0" />
+                          </StackPanel>
+                          <local:LucideIcon Icon="zap" Size="17" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Right" />
+                        </Grid>
+                        <Grid Margin="8,1,8,4" Visibility="{Binding ThinkingSpectrumActiveHeaderVisibility}">
+                          <TextBlock Text="{Binding ThinkingSpectrumStartLabel}" Foreground="{DynamicResource TextMuted}" FontSize="14" FontWeight="Medium" />
+                          <TextBlock Text="{Binding ThinkingSpectrumEndLabel}" Foreground="{DynamicResource TextMuted}" FontSize="14" FontWeight="Medium" HorizontalAlignment="Right" />
+                        </Grid>
+                        <Slider Style="{StaticResource CodexThinkingSpectrumSlider}" Minimum="0" Maximum="{Binding ThinkingSliderMaximum}" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding ThinkingSliderValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="8,0,8,6" PreviewMouseLeftButtonDown="ThinkingSpectrumSlider_PreviewMouseLeftButtonDown" PreviewMouseLeftButtonUp="ThinkingSpectrumSlider_PreviewMouseLeftButtonUp" LostMouseCapture="ThinkingSpectrumSlider_LostMouseCapture" />
+                      </StackPanel>
+                      <StackPanel Visibility="{Binding StandardReasoningOptionsVisibility}">
                       <TextBlock Text="{Binding ReasoningText}" Foreground="{DynamicResource TextMuted}" FontSize="14" FontWeight="Medium" Margin="8,0,8,8" />
                       <ItemsControl ItemsSource="{Binding ReasoningOptions}">
                         <ItemsControl.ItemTemplate>
@@ -1473,6 +1565,7 @@
                           </DataTemplate>
                         </ItemsControl.ItemTemplate>
                       </ItemsControl>
+                      </StackPanel>
                       <Border Height="1" Background="{DynamicResource PopupDivider}" Margin="8,7" />
                       <TextBlock Text="{Binding ModelText}" Foreground="{DynamicResource TextMuted}" FontSize="13" FontWeight="Medium" Margin="8,0,8,6" />
                       <ItemsControl ItemsSource="{Binding ModelOptions}">
@@ -2134,6 +2227,21 @@
               <Popup PlacementTarget="{Binding ElementName=ChatThinkingPickerHost}" Placement="Top" VerticalOffset="-8" AllowsTransparency="True" StaysOpen="False" IsOpen="{Binding IsChatThinkingPickerOpen, Mode=TwoWay}" DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
                 <Border Width="344" Background="{DynamicResource PopupBg}" BorderBrush="{DynamicResource PopupBorder}" BorderThickness="1" CornerRadius="14" Padding="12,10">
                   <StackPanel>
+                    <StackPanel Visibility="{Binding GptSolThinkingSliderVisibility}">
+                      <Grid Margin="8,1,8,4" Visibility="{Binding ThinkingSpectrumIdleHeaderVisibility}">
+                        <StackPanel Orientation="Horizontal">
+                          <TextBlock Text="{Binding ThinkingSpectrumIdleLabel}" Foreground="{DynamicResource TextMuted}" FontSize="14" FontWeight="Medium" />
+                          <local:LucideIcon Icon="chevron-right" Size="13" Stroke="{DynamicResource TextMuted}" Margin="5,1,0,0" />
+                        </StackPanel>
+                        <local:LucideIcon Icon="zap" Size="17" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Grid Margin="8,1,8,4" Visibility="{Binding ThinkingSpectrumActiveHeaderVisibility}">
+                        <TextBlock Text="{Binding ThinkingSpectrumStartLabel}" Foreground="{DynamicResource TextMuted}" FontSize="14" FontWeight="Medium" />
+                        <TextBlock Text="{Binding ThinkingSpectrumEndLabel}" Foreground="{DynamicResource TextMuted}" FontSize="14" FontWeight="Medium" HorizontalAlignment="Right" />
+                      </Grid>
+                      <Slider Style="{StaticResource CodexThinkingSpectrumSlider}" Minimum="0" Maximum="{Binding ThinkingSliderMaximum}" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding ThinkingSliderValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="8,0,8,6" PreviewMouseLeftButtonDown="ThinkingSpectrumSlider_PreviewMouseLeftButtonDown" PreviewMouseLeftButtonUp="ThinkingSpectrumSlider_PreviewMouseLeftButtonUp" LostMouseCapture="ThinkingSpectrumSlider_LostMouseCapture" />
+                    </StackPanel>
+                    <StackPanel Visibility="{Binding StandardReasoningOptionsVisibility}">
                     <TextBlock Text="{Binding ReasoningText}" Foreground="{DynamicResource TextMuted}" FontSize="14" FontWeight="Medium" Margin="8,0,8,8" />
                     <ItemsControl ItemsSource="{Binding ReasoningOptions}">
                       <ItemsControl.ItemTemplate>
@@ -2148,6 +2256,7 @@
                         </DataTemplate>
                       </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                    </StackPanel>
                     <Border Height="1" Background="{DynamicResource PopupDivider}" Margin="8,7" />
                     <TextBlock Text="{Binding ModelText}" Foreground="{DynamicResource TextMuted}" FontSize="13" FontWeight="Medium" Margin="8,0,8,6" />
                     <ItemsControl ItemsSource="{Binding ModelOptions}">
@@ -2324,17 +2433,17 @@
               </Border>
             </Popup>
           </Grid>
-          <Border Width="1" Height="14" Background="{DynamicResource Line}" Margin="6,0,10,0" />
-          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <Border Width="1" Height="14" Background="{DynamicResource Line}" />
+          <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0">
             <local:LucideIcon Icon="zap" Size="13" Stroke="{DynamicResource TextDim}" Margin="0,0,6,0" />
             <TextBlock Text="{Binding LocalReadyText}" Foreground="{DynamicResource TextDim}" FontSize="12" />
           </StackPanel>
-          <Border Width="1" Height="14" Background="{DynamicResource Line}" Margin="10,0" />
+          <Border Width="1" Height="14" Background="{DynamicResource Line}" />
           <TextBlock x:Name="BottomLiveStatusText" Text="{Binding StatusText}" Foreground="{DynamicResource TextMuted}" FontSize="12"
                      MaxWidth="420" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
                      AutomationProperties.Name="Status" AutomationProperties.LiveSetting="Polite" />
-          <Grid x:Name="BottomApprovalPickerHost" Margin="10,0,0,0">
-            <Button Style="{StaticResource GhostButton}" Height="24" Padding="4,0" Click="BottomApproval_Click" ToolTip="{Binding ApprovalModeToolTip}">
+          <Grid x:Name="BottomApprovalPickerHost">
+            <Button Style="{StaticResource GhostButton}" Height="24" Padding="8,0" Click="BottomApproval_Click" ToolTip="{Binding ApprovalModeToolTip}">
               <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                 <local:LucideIcon Icon="shield-check" Size="13" Stroke="{DynamicResource TextDim}" Margin="0,0,6,0" />
                 <TextBlock Text="{Binding ApprovalLabel}" Foreground="{DynamicResource TextDim}" FontSize="12" />

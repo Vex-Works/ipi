@@ -346,7 +346,59 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public string ModelMenuLabel { get => _modelMenuLabel; set { _modelMenuLabel = value; OnPropertyChanged(); } }
 
     private string _thinkingLevel = "medium";
-    public string ThinkingLevel { get => _thinkingLevel; set { _thinkingLevel = value; OnPropertyChanged(); } }
+    public string ThinkingLevel
+    {
+        get => _thinkingLevel;
+        set
+        {
+            if (_thinkingLevel == value) return;
+            _thinkingLevel = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ThinkingSliderValue));
+        }
+    }
+
+    public Visibility GptSolThinkingSliderVisibility => SupportsActiveThinkingSpectrum() ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility StandardReasoningOptionsVisibility => SupportsActiveThinkingSpectrum() ? Visibility.Collapsed : Visibility.Visible;
+    public double ThinkingSliderMaximum => Math.Max(0, ActiveThinkingLevels().Count - 1);
+    public string ThinkingSpectrumStartLabel => L("更高效", "Faster");
+    public string ThinkingSpectrumEndLabel => L("更智能", "Smarter");
+    public string ThinkingSpectrumIdleLabel => L("高级", "Advanced");
+
+    private bool _isThinkingSliderInteracting;
+    public Visibility ThinkingSpectrumIdleHeaderVisibility => _isThinkingSliderInteracting ? Visibility.Collapsed : Visibility.Visible;
+    public Visibility ThinkingSpectrumActiveHeaderVisibility => _isThinkingSliderInteracting ? Visibility.Visible : Visibility.Collapsed;
+
+    public double ThinkingSliderValue
+    {
+        get
+        {
+            var levels = ActiveThinkingLevels();
+            var index = levels.IndexOf(ThinkingLevel);
+            return index >= 0 ? index : Math.Max(0, levels.IndexOf("medium"));
+        }
+        set
+        {
+            var levels = ActiveThinkingLevels();
+            if (levels.Count < 2) return;
+            var position = Math.Clamp((int)Math.Round(value), 0, levels.Count - 1);
+            var level = levels[position];
+            if (ThinkingLevel == level) return;
+            ThinkingLevel = level;
+            UpdateModelLabels();
+            UpdateReasoningOptions();
+            RebuildModelOptions();
+            _pi.SetDefaultModelSelection(_activeProvider, _activeModel, ThinkingLevel);
+        }
+    }
+
+    public void SetThinkingSliderInteracting(bool interacting)
+    {
+        if (_isThinkingSliderInteracting == interacting) return;
+        _isThinkingSliderInteracting = interacting;
+        OnPropertyChanged(nameof(ThinkingSpectrumIdleHeaderVisibility));
+        OnPropertyChanged(nameof(ThinkingSpectrumActiveHeaderVisibility));
+    }
 
     private bool _isVoiceBusy;
     private bool _isVoiceRecording;
@@ -1835,8 +1887,56 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     {
         var model = string.IsNullOrWhiteSpace(_activeModel) ? "model" : _activeModel;
         ModelLabel = $"model: {model} · {ThinkingLevel}";
-        ModelControlLabel = $"{ShortModel(model)} {FormatThinking(ThinkingLevel)}";
+        ModelControlLabel = IsGpt56CodexFamily(_activeProvider, model)
+            ? $"{FormatGpt56SpectrumModel(model)} {FormatSpectrumThinking(ThinkingLevel)}"
+            : $"{ShortModel(model)} {FormatThinking(ThinkingLevel)}";
         ModelMenuLabel = PrettyModel(model);
+    }
+
+    private static bool IsGpt56CodexFamily(string provider, string model)
+        => provider.Equals("openai-codex", StringComparison.OrdinalIgnoreCase)
+           && model.Contains("gpt-5.6", StringComparison.OrdinalIgnoreCase)
+           && (model.Contains("terra", StringComparison.OrdinalIgnoreCase)
+               || model.Contains("luna", StringComparison.OrdinalIgnoreCase)
+               || model.Contains("sol", StringComparison.OrdinalIgnoreCase));
+
+    private List<string> ActiveThinkingLevels()
+    {
+        var option = _registryModelOptions.FirstOrDefault(item =>
+            item.Provider.Equals(_activeProvider, StringComparison.OrdinalIgnoreCase)
+            && item.Model.Equals(_activeModel, StringComparison.OrdinalIgnoreCase));
+        if (option?.ThinkingLevels is null) return new List<string>();
+        var order = new[] { "minimal", "low", "medium", "high", "xhigh" };
+        return order.Where(level => option.ThinkingLevels.Contains(level, StringComparer.OrdinalIgnoreCase)).ToList();
+    }
+
+    private bool SupportsActiveThinkingSpectrum()
+        => IsGpt56CodexFamily(_activeProvider, _activeModel) && ActiveThinkingLevels().Count > 1;
+
+    private static string FormatGpt56SpectrumModel(string model)
+    {
+        var tier = model.Contains("terra", StringComparison.OrdinalIgnoreCase) ? "Terra"
+            : model.Contains("luna", StringComparison.OrdinalIgnoreCase) ? "Luna"
+            : "Sol";
+        return $"5.6 {tier}";
+    }
+
+    private string FormatSpectrumThinking(string thinking) => thinking switch
+    {
+        "minimal" => L("最低", "Minimal"),
+        "low" => L("轻度", "Light"),
+        "medium" => L("中", "Medium"),
+        "high" => L("高", "High"),
+        "xhigh" => L("极高", "Extreme"),
+        _ => L("中", "Medium")
+    };
+
+    private void RefreshThinkingControlVisibility()
+    {
+        OnPropertyChanged(nameof(GptSolThinkingSliderVisibility));
+        OnPropertyChanged(nameof(StandardReasoningOptionsVisibility));
+        OnPropertyChanged(nameof(ThinkingSliderMaximum));
+        OnPropertyChanged(nameof(ThinkingSliderValue));
     }
 
     private void RebuildModelOptions()
@@ -1860,13 +1960,34 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
         ModelOptions.Clear();
         foreach (var option in combined
-            .OrderByDescending(item => item.Provider.Equals(_activeProvider, StringComparison.OrdinalIgnoreCase) && item.Model.Equals(_activeModel, StringComparison.OrdinalIgnoreCase))
-            .ThenBy(item => item.Provider, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(item => item.Provider, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(ModelSortFamily, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(ModelTierSortOrder)
             .ThenBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase))
         {
             var selected = option.Provider.Equals(_activeProvider, StringComparison.OrdinalIgnoreCase) && option.Model.Equals(_activeModel, StringComparison.OrdinalIgnoreCase);
             ModelOptions.Add(new ModelOptionItem(option.Provider, option.Model, PrettyModel(option.DisplayName), option.Provider, option.Source, selected ? "✓" : ""));
         }
+    }
+
+    private static string ModelSortFamily(PiModelOptionRecord option)
+    {
+        if (!option.Provider.Equals("openai-codex", StringComparison.OrdinalIgnoreCase)) return option.DisplayName;
+        var model = option.Model.ToLowerInvariant();
+        if (!model.Contains("gpt-5.6", StringComparison.Ordinal)) return option.DisplayName;
+        return model.Replace("-luna", "", StringComparison.Ordinal)
+            .Replace("-terra", "", StringComparison.Ordinal)
+            .Replace("-sol", "", StringComparison.Ordinal);
+    }
+
+    private static int ModelTierSortOrder(PiModelOptionRecord option)
+    {
+        if (!option.Provider.Equals("openai-codex", StringComparison.OrdinalIgnoreCase)
+            || !option.Model.Contains("gpt-5.6", StringComparison.OrdinalIgnoreCase)) return 0;
+        if (option.Model.Contains("luna", StringComparison.OrdinalIgnoreCase)) return 1;
+        if (option.Model.Contains("terra", StringComparison.OrdinalIgnoreCase)) return 2;
+        if (option.Model.Contains("sol", StringComparison.OrdinalIgnoreCase)) return 3;
+        return 0;
     }
 
     private async Task LoadRegistryModelOptionsAsync()
@@ -1879,6 +2000,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             {
                 if (version != _modelOptionsLoadVersion) return;
                 _registryModelOptions = models.ToList();
+                RefreshThinkingControlVisibility();
+                UpdateModelLabels();
                 RebuildModelOptions();
             });
         }
@@ -1969,6 +2092,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         }
         _contextLimitTokens = _pi.ReadContextWindow(_activeProvider, _activeModel);
         UpdateModelLabels();
+        RefreshThinkingControlVisibility();
         UpdateReasoningOptions();
         RebuildModelOptions();
         _ = LoadRegistryModelOptionsAsync();
@@ -1977,10 +2101,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         LoadSidebarExplorer();
         LoadExplorerTree();
         LoadSidebarConfig(settings);
-        var enabledSkills = _skills.Count(skill => skill.IsEnabled);
-        LocalSummaryText = $"{_sessions.Count} sessions · {_files.Count} files · {enabledSkills}/{_skills.Count} skills";
+        LocalSummaryText = string.Empty;
         SetTopUsage(new SessionUsageSummary(0, 0, 0, 0, 0, 0));
-        StatusText = $"loaded {_sessions.Count} sessions · {_files.Count} files · {enabledSkills}/{_skills.Count} skills · {_packages.Count} packages";
+        StatusText = string.Empty;
     }
 
     public async void SendPrompt()
@@ -3336,22 +3459,30 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         UpdateModelLabels();
         UpdateReasoningOptions();
         RebuildModelOptions();
+        _pi.SetDefaultModelSelection(_activeProvider, _activeModel, ThinkingLevel);
         IsMainThinkingPickerOpen = false;
         IsChatThinkingPickerOpen = false;
-        StatusText = $"thinking: {ThinkingLevel}";
+        StatusText = string.Empty;
     }
 
     public void SelectModelOption(ModelOptionItem option)
     {
         _activeProvider = option.Provider;
         _activeModel = option.Model;
+        var levels = ActiveThinkingLevels();
+        if (levels.Count > 0 && !levels.Contains(ThinkingLevel, StringComparer.OrdinalIgnoreCase))
+        {
+            ThinkingLevel = levels.Contains("medium", StringComparer.OrdinalIgnoreCase) ? "medium" : levels[0];
+        }
         _contextLimitTokens = _pi.ReadContextWindow(_activeProvider, _activeModel);
         UpdateModelLabels();
+        RefreshThinkingControlVisibility();
         RebuildModelOptions();
         SetTopUsage(_currentUsage);
+        _pi.SetDefaultModelSelection(_activeProvider, _activeModel, ThinkingLevel);
         IsMainThinkingPickerOpen = false;
         IsChatThinkingPickerOpen = false;
-        StatusText = $"model: {_activeProvider}/{_activeModel}";
+        StatusText = string.Empty;
     }
 
     public void OpenModelPickerFromComposer()

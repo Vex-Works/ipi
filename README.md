@@ -103,6 +103,22 @@ ipi focuses on the parts of local agent work that benefit from being visible and
 - temporary side chats for quick parallel questions;
 - a clean, simple desktop interface.
 
+### Full GPT-5.6 model control
+
+ipi supports the full GPT-5.6 lineup:
+
+- **Luna**
+- **Terra**
+- **Sol**
+
+Each model has its own adjustable reasoning levels. Instead of treating GPT-5.6 as a single scale from faster to smarter, ipi lets you choose the model that fits the task, then choose how deeply it should think.
+
+**Choose the model. Choose how deeply it thinks.**
+
+<p align="center">
+  <img alt="GPT-5.6 Luna, Terra, and Sol model controls in ipi" src="docs/images/ipi-gpt-5-6-model-control.png" width="900">
+</p>
+
 <p align="center">
   <img alt="ipi provider setup" src="docs/images/ipi-provider-setup.png" width="760">
 </p>
