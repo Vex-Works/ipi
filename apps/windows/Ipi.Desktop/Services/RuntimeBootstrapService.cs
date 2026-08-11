@@ -30,7 +30,7 @@ public sealed record RuntimeBootstrapAction(string Label, string Detail);
 
 public sealed class RuntimeBootstrapService
 {
-    public const string PiPackageVersion = "0.80.6";
+    public const string PiPackageVersion = "0.84.1";
     public const string PiPackageSpec = "@earendil-works/pi-coding-agent@" + PiPackageVersion;
     public const string PiPackageName = "@earendil-works/pi-coding-agent";
     public const string PiPackageUrl = "https://www.npmjs.com/package/@earendil-works/pi-coding-agent";
