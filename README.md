@@ -59,8 +59,8 @@ The result is a desktop agent system that is:
 
 Download the latest beta from **Releases**:
 
-- `ipi-Setup-...-win-x64.exe` — Windows installer
-- `ipi-portable-...-win-x64.zip` — portable zip
+- `ipi-Setup-0.1.3-beta.5-win-x64.exe` — Windows installer
+- `ipi-portable-0.1.3-beta.5-win-x64.zip` — portable zip
 
 The Windows builds are self-contained, so you do **not** need to install the .NET Desktop Runtime separately.
 
@@ -77,6 +77,13 @@ Setup can:
 3. verify the Node archive against Node's official checksum file;
 4. install the upstream `@earendil-works/pi-coding-agent` package from npm;
 5. create local agent folders and open provider/model onboarding.
+
+New ipi-managed installations use upstream Pi `0.84.1`. After setup, ipi checks
+for newer upstream Pi releases in the background. When an update is available,
+the toolbar shows a compact download control: click once to download and verify
+the managed runtime, then restart ipi to activate it. Existing legacy runtimes
+can be migrated into ipi's managed runtime without modifying the user's global
+npm packages.
 
 It does **not** install Pi globally, modify PATH, require admin rights, or store API keys.
 
