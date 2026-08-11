@@ -1531,7 +1531,22 @@ public partial class MainWindow
 
     private void ReturnToChat_Click(object sender, RoutedEventArgs e) => ViewModel.ReturnToChat();
 
-    private void UpdateIndicator_Click(object sender, RoutedEventArgs e) => ViewModel.IsUpdatePopupOpen = true;
+    private async void UpdateIndicator_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.IsUpdateReadyToRestart)
+        {
+            ViewModel.RestartToApplyPreparedUpdate();
+        }
+        else
+        {
+            await ViewModel.ApplyAppUpdateAsync();
+        }
+
+        if (!string.IsNullOrWhiteSpace(ViewModel.UpdateFailureMessage))
+        {
+            MessageBox.Show(this, ViewModel.UpdateFailureMessage, T("更新失败", "Update failed"), MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
 
     private async void UpdateNow_Click(object sender, RoutedEventArgs e) => await ViewModel.ApplyAppUpdateAsync();
 

@@ -956,36 +956,67 @@
             </Popup>
           </Grid>
           <Button Style="{StaticResource ToolbarButton}" Click="TopSystem_Click"><StackPanel Orientation="Horizontal"><local:LucideIcon Icon="terminal-square" Size="14" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Margin="0,0,7,0" /><TextBlock Text="{Binding SystemText}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" FontSize="12" /></StackPanel></Button>
-          <Grid x:Name="UpdateIndicatorHost" Visibility="{Binding UpdateButtonVisibility}" Margin="4,0,0,0">
-            <Button Style="{StaticResource ToolbarButton}" Click="UpdateIndicator_Click" Padding="8,5" ToolTip="{Binding UpdateStatusText}">
-              <StackPanel Orientation="Horizontal">
-                <Border Width="7" Height="7" CornerRadius="3.5" Background="{DynamicResource FeedbackAccent}" Margin="0,0,7,0" VerticalAlignment="Center" />
-                <TextBlock Text="{Binding UpdateAvailableText}" Foreground="{DynamicResource TextPrimary}" FontSize="12" />
-              </StackPanel>
-            </Button>
-            <Popup PlacementTarget="{Binding ElementName=UpdateIndicatorHost}" Placement="Bottom" VerticalOffset="8" AllowsTransparency="True" StaysOpen="False" IsOpen="{Binding IsUpdatePopupOpen, Mode=TwoWay}" DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
-              <Border Width="330" Background="{DynamicResource PopupBg}" BorderBrush="{DynamicResource PopupBorder}" BorderThickness="1" CornerRadius="14" Padding="14">
-                <StackPanel>
-                  <Grid Margin="0,0,0,8">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                    <Border Width="22" Height="22" CornerRadius="11" Background="{DynamicResource FeedbackAccent}" Opacity="0.18" HorizontalAlignment="Left" VerticalAlignment="Top">
-                      <local:LucideIcon Icon="refresh-cw" Size="13" Stroke="{DynamicResource FeedbackAccent}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                    </Border>
-                    <StackPanel Grid.Column="1">
-                      <TextBlock Text="{Binding UpdatePopupTitle}" Foreground="{DynamicResource TextPrimary}" FontSize="14" FontWeight="SemiBold" />
-                      <TextBlock Text="{Binding UpdateStatusText}" Foreground="{DynamicResource FeedbackAccent}" FontSize="12" Margin="0,5,0,0" TextWrapping="Wrap" />
-                    </StackPanel>
-                  </Grid>
-                  <TextBlock Text="{Binding UpdatePopupDescription}" Foreground="{DynamicResource TextMuted}" FontSize="12" TextWrapping="Wrap" LineHeight="18" Margin="0,2,0,10" />
-                  <TextBlock Text="{Binding UpdateDetailText}" Foreground="{DynamicResource TextDim}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,12" />
-                  <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                    <Button Style="{StaticResource GhostButton}" Click="UpdateRefresh_Click" Padding="10,6" Margin="0,0,8,0"><TextBlock Text="{Binding RefreshLocalDataToolTip}" Foreground="{DynamicResource TextMuted}" FontSize="12" /></Button>
-                    <Button Style="{StaticResource ToolbarButton}" Click="UpdateNow_Click" IsEnabled="{Binding CanApplyUpdate}" Padding="12,6"><TextBlock Text="{Binding UpdateActionText}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" FontSize="12" FontWeight="SemiBold" /></Button>
-                  </StackPanel>
-                </StackPanel>
-              </Border>
-            </Popup>
-          </Grid>
+          <Button Style="{StaticResource GhostButton}" Visibility="{Binding UpdateButtonVisibility}" IsEnabled="{Binding CanApplyUpdate}" Click="UpdateIndicator_Click" Width="36" Height="36" Margin="4,0,0,0" ToolTip="{Binding UpdateActionText}" AutomationProperties.Name="{Binding UpdateActionText}">
+            <Grid Width="20" Height="20" IsHitTestVisible="False">
+              <Grid Width="18" Height="18">
+                <Ellipse Fill="{DynamicResource TextDim}" Opacity="0.14" />
+                <Ellipse Stroke="{DynamicResource TextDim}" StrokeThickness="0.7" Opacity="0.38" />
+
+                <Path Data="M9,4 L9,12 M6,9 L9,12 L12,9" Stroke="{DynamicResource TextMuted}" StrokeThickness="1.2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Visibility="{Binding UpdateDownloadIconVisibility}">
+                  <Path.RenderTransform><TranslateTransform Y="1" /></Path.RenderTransform>
+                </Path>
+
+                <Grid Visibility="{Binding UpdateDownloadingIconVisibility}" Clip="M0,9 A9,9 0 1 0 18,9 A9,9 0 1 0 0,9">
+                  <Grid.RenderTransform><TranslateTransform Y="1" /></Grid.RenderTransform>
+                  <Path Data="M9,3.5 L9,12 M6,9 L9,12 L12,9" Stroke="{DynamicResource TextMuted}" StrokeThickness="1.2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" RenderTransformOrigin="0.5,0.5">
+                  <Path.RenderTransform>
+                    <TransformGroup>
+                      <ScaleTransform />
+                      <TranslateTransform />
+                    </TransformGroup>
+                  </Path.RenderTransform>
+                  <Path.Style>
+                    <Style TargetType="{x:Type Path}">
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsUpdateApplyRunning}" Value="True">
+                          <DataTrigger.EnterActions>
+                            <BeginStoryboard>
+                              <Storyboard>
+                                <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[1].(TranslateTransform.Y)" From="-4" To="4" Duration="0:0:1.35" RepeatBehavior="Forever">
+                                  <DoubleAnimation.EasingFunction><SineEase EasingMode="EaseInOut" /></DoubleAnimation.EasingFunction>
+                                </DoubleAnimation>
+                                <DoubleAnimationUsingKeyFrames Storyboard.TargetProperty="Opacity" Duration="0:0:1.35" RepeatBehavior="Forever">
+                                  <DiscreteDoubleKeyFrame KeyTime="0:0:0" Value="0" />
+                                  <SplineDoubleKeyFrame KeyTime="0:0:0.28" Value="0.55" KeySpline="0.2,0,0.2,1" />
+                                  <SplineDoubleKeyFrame KeyTime="0:0:0.62" Value="0.9" KeySpline="0.2,0,0.2,1" />
+                                  <SplineDoubleKeyFrame KeyTime="0:0:1.08" Value="0" KeySpline="0.4,0,1,1" />
+                                  <DiscreteDoubleKeyFrame KeyTime="0:0:1.35" Value="0" />
+                                </DoubleAnimationUsingKeyFrames>
+                                <DoubleAnimationUsingKeyFrames Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(ScaleTransform.ScaleX)" Duration="0:0:1.35" RepeatBehavior="Forever">
+                                  <DiscreteDoubleKeyFrame KeyTime="0:0:0" Value="0.8" />
+                                  <SplineDoubleKeyFrame KeyTime="0:0:0.62" Value="0.98" KeySpline="0.2,0,0.2,1" />
+                                  <SplineDoubleKeyFrame KeyTime="0:0:1.35" Value="0.84" KeySpline="0.4,0,1,1" />
+                                </DoubleAnimationUsingKeyFrames>
+                                <DoubleAnimationUsingKeyFrames Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[0].(ScaleTransform.ScaleY)" Duration="0:0:1.35" RepeatBehavior="Forever">
+                                  <DiscreteDoubleKeyFrame KeyTime="0:0:0" Value="0.8" />
+                                  <SplineDoubleKeyFrame KeyTime="0:0:0.62" Value="0.98" KeySpline="0.2,0,0.2,1" />
+                                  <SplineDoubleKeyFrame KeyTime="0:0:1.35" Value="0.84" KeySpline="0.4,0,1,1" />
+                                </DoubleAnimationUsingKeyFrames>
+                              </Storyboard>
+                            </BeginStoryboard>
+                          </DataTrigger.EnterActions>
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </Path.Style>
+                  </Path>
+
+                </Grid>
+
+                <local:LucideIcon Icon="refresh-cw" Size="11" Stroke="{DynamicResource TextMuted}" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding UpdateRestartIconVisibility}" />
+              </Grid>
+            </Grid>
+          </Button>
         </StackPanel>
         <Border Grid.Column="1" Background="Transparent" />
         <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" shell:WindowChrome.IsHitTestVisibleInChrome="True">

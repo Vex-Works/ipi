@@ -22,7 +22,12 @@ param(
     [string]$ExpectedPiVersion = '',
     [string]$PiCurrent = '',
     [string]$PiStage = '',
-    [string]$PiBackup = ''
+    [string]$PiBackup = '',
+    [switch]$PiIsNewInstall,
+    [switch]$SwitchRuntimeConfig,
+    [switch]$RuntimeConfigIsNew,
+    [string]$RuntimeConfigPath = '',
+    [string]$RuntimeConfigBackup = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,6 +35,8 @@ $appOldBackedUp = $false
 $appNewActive = $false
 $piOldBackedUp = $false
 $piNewActive = $false
+$runtimeConfigBackedUp = $false
+$runtimeConfigCreated = $false
 $restartedProcess = $null
 
 function Write-UpdateLog([string]$Message) {
@@ -177,7 +184,13 @@ function Assert-PiSwapReady {
     if (-not (Test-PathsEqual $piParent $managedRoot)) {
         throw "PiCurrent parent does not match ManagedRuntimeRoot: $PiCurrent"
     }
-    Assert-CurrentRoot $PiCurrent $managedRoot 'Pi root'
+    if ($PiIsNewInstall) {
+        if (Test-Path -LiteralPath $PiCurrent) { throw "new managed Pi destination already exists: $PiCurrent" }
+        Assert-PathAncestorsNotReparse $managedRoot 'managed runtime root'
+    }
+    else {
+        Assert-CurrentRoot $PiCurrent $managedRoot 'Pi root'
+    }
     Assert-SwapPath $PiStage $managedRoot '.ipi-pi-staging-' $true 'Pi staging'
     Assert-SwapPath $PiBackup $managedRoot '.ipi-pi-backup-' $false 'Pi backup'
     Assert-TreeNotReparse $PiStage 'Pi staging'
@@ -209,6 +222,20 @@ function Assert-PiSwapReady {
     if (-not (Test-Path -LiteralPath (Join-Path $installedRoot 'dist\index.js') -PathType Leaf)) {
         throw 'staged Pi package is missing dist/index.js'
     }
+
+    if ($SwitchRuntimeConfig) {
+        $configParent = [IO.Path]::GetDirectoryName((Get-NormalizedPath $RuntimeConfigPath))
+        Assert-PathAncestorsNotReparse $configParent 'runtime config parent'
+        if ($RuntimeConfigIsNew) {
+            if (Test-Path -LiteralPath $RuntimeConfigPath) { throw 'new runtime config destination already exists' }
+            if (-not [string]::IsNullOrWhiteSpace($RuntimeConfigBackup)) { throw 'new runtime config must not have a backup path' }
+        }
+        else {
+            if (-not (Test-Path -LiteralPath $RuntimeConfigPath -PathType Leaf)) { throw 'runtime config is missing' }
+            Assert-PathAncestorsNotReparse $RuntimeConfigPath 'runtime config'
+            Assert-SwapPath $RuntimeConfigBackup $configParent '.ipi-runtime-config-backup-' $false 'runtime config backup'
+        }
+    }
 }
 
 function Assert-RestoredStateReady {
@@ -231,6 +258,10 @@ function Assert-RestoredStateReady {
         throw "restored Pi root is outside the managed runtime: $PiCurrent"
     }
     if (Test-Path -LiteralPath $PiBackup) { throw "Pi backup still exists after rollback: $PiBackup" }
+    if ($PiIsNewInstall) {
+        if (Test-Path -LiteralPath $PiCurrent) { throw 'new managed Pi root still exists after rollback' }
+        return
+    }
     Assert-CurrentRoot $PiCurrent $managedRoot 'restored Pi root'
     Assert-TreeNotReparse $PiCurrent 'restored Pi root'
 
@@ -272,6 +303,18 @@ function Move-DirectoryAtomic([string]$Source, [string]$Destination) {
     [IO.Directory]::Move((Get-NormalizedPath $Source), (Get-NormalizedPath $Destination))
 }
 
+function Move-FileReplacing([string]$Source, [string]$Destination) {
+    $sourcePath = Get-NormalizedPath $Source
+    $destinationPath = Get-NormalizedPath $Destination
+    if (Test-Path -LiteralPath $destinationPath -PathType Leaf) {
+        [IO.File]::Copy($sourcePath, $destinationPath, $true)
+        [IO.File]::Delete($sourcePath)
+    }
+    else {
+        [IO.File]::Move($sourcePath, $destinationPath)
+    }
+}
+
 function Restore-Swap([string]$Current, [string]$Stage, [string]$Backup, [bool]$NewActive, [bool]$OldBackedUp, [string]$Label) {
     if ($NewActive -and (Test-Path -LiteralPath $Current -PathType Container)) {
         if (Test-Path -LiteralPath $Stage) { throw "$Label rollback stage unexpectedly exists: $Stage" }
@@ -281,6 +324,13 @@ function Restore-Swap([string]$Current, [string]$Stage, [string]$Backup, [bool]$
         if (Test-Path -LiteralPath $Current) { throw "$Label rollback destination is occupied: $Current" }
         Move-DirectoryAtomic $Backup $Current
     }
+}
+
+function Remove-FailedStage([string]$Stage, [string]$Parent, [string]$Prefix, [string]$Label) {
+    if ([string]::IsNullOrWhiteSpace($Stage) -or -not (Test-Path -LiteralPath $Stage -PathType Container)) { return }
+    Assert-SwapPath $Stage $Parent $Prefix $true $Label
+    Assert-TreeNotReparse $Stage $Label
+    Remove-Item -LiteralPath $Stage -Recurse -Force
 }
 
 try {
@@ -309,10 +359,28 @@ try {
 
     if ($ApplyPi) {
         Write-UpdateLog 'activating staged Pi directory'
-        Move-DirectoryAtomic $PiCurrent $PiBackup
-        $piOldBackedUp = $true
+        if (-not $PiIsNewInstall) {
+            Move-DirectoryAtomic $PiCurrent $PiBackup
+            $piOldBackedUp = $true
+        }
         Move-DirectoryAtomic $PiStage $PiCurrent
         $piNewActive = $true
+        if ($SwitchRuntimeConfig) {
+            if ($RuntimeConfigIsNew) {
+                $runtimeConfig = [pscustomobject]@{}
+            }
+            else {
+                [IO.File]::Copy((Get-NormalizedPath $RuntimeConfigPath), (Get-NormalizedPath $RuntimeConfigBackup), $false)
+                $runtimeConfigBackedUp = $true
+                $runtimeConfig = Get-Content -LiteralPath $RuntimeConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            }
+            $managedPackageRoot = Join-Path $PiCurrent 'node_modules\@earendil-works\pi-coding-agent'
+            $runtimeConfig | Add-Member -NotePropertyName piCodingAgentRoot -NotePropertyValue $managedPackageRoot -Force
+            $runtimeConfigTemp = "$RuntimeConfigPath.$ParentProcessId.tmp"
+            $runtimeConfig | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $runtimeConfigTemp -Encoding UTF8
+            Move-FileReplacing $runtimeConfigTemp $RuntimeConfigPath
+            if ($RuntimeConfigIsNew) { $runtimeConfigCreated = $true }
+        }
     }
 
     $activeExecutable = Join-Path $AppCurrent $AppExecutableName
@@ -343,6 +411,20 @@ catch {
         try { Restore-Swap $PiCurrent $PiStage $PiBackup $piNewActive $piOldBackedUp 'Pi' }
         catch { $rollbackFailed = $true; Write-UpdateLog "Pi rollback failed: $($_.Exception.Message)" }
     }
+    if ($runtimeConfigBackedUp) {
+        try {
+            Move-FileReplacing $RuntimeConfigBackup $RuntimeConfigPath
+            $runtimeConfigBackedUp = $false
+        }
+        catch { $rollbackFailed = $true; Write-UpdateLog "runtime config rollback failed: $($_.Exception.Message)" }
+    }
+    elseif ($runtimeConfigCreated -and (Test-Path -LiteralPath $RuntimeConfigPath -PathType Leaf)) {
+        try {
+            Remove-Item -LiteralPath $RuntimeConfigPath -Force
+            $runtimeConfigCreated = $false
+        }
+        catch { $rollbackFailed = $true; Write-UpdateLog "new runtime config rollback failed: $($_.Exception.Message)" }
+    }
     if ($ApplyApp) {
         try { Restore-Swap $AppCurrent $AppStage $AppBackup $appNewActive $appOldBackedUp 'app' }
         catch { $rollbackFailed = $true; Write-UpdateLog "app rollback failed: $($_.Exception.Message)" }
@@ -355,6 +437,18 @@ catch {
         catch {
             $rollbackFailed = $true
             Write-UpdateLog "restored state validation failed: $($_.Exception.Message)"
+        }
+    }
+
+    if (-not $rollbackFailed) {
+        if ($ApplyPi) {
+            try { Remove-FailedStage $PiStage $ManagedRuntimeRoot '.ipi-pi-staging-' 'failed Pi staging cleanup' }
+            catch { Write-UpdateLog "failed Pi staging cleanup failed: $($_.Exception.Message)" }
+        }
+        if ($ApplyApp) {
+            $appParent = [IO.Path]::GetDirectoryName((Get-NormalizedPath $AppCurrent))
+            try { Remove-FailedStage $AppStage $appParent '.ipi-app-staging-' 'failed app staging cleanup' }
+            catch { Write-UpdateLog "failed app staging cleanup failed: $($_.Exception.Message)" }
         }
     }
 
@@ -389,6 +483,13 @@ catch {
 }
 
 Write-UpdateLog 'removing update backups'
+if ($runtimeConfigBackedUp -and (Test-Path -LiteralPath $RuntimeConfigBackup -PathType Leaf)) {
+    try {
+        Remove-Item -LiteralPath $RuntimeConfigBackup -Force
+        $runtimeConfigBackedUp = $false
+    }
+    catch { Write-UpdateLog "runtime config backup cleanup failed: $($_.Exception.Message)" }
+}
 if ($piOldBackedUp -and (Test-Path -LiteralPath $PiBackup -PathType Container)) {
     try {
         $piParent = [IO.Path]::GetDirectoryName((Get-NormalizedPath $PiCurrent))

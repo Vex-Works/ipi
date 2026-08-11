@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -480,6 +481,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private bool _hasUpstreamUpdate;
     private bool _hasAppRepoUpdate;
     private bool _hasPiRuntimeUpdate;
+    private bool _hasExternalPiRuntimeUpdate;
+    private bool _hasUpdateCheckError;
+    private bool _isUpdateReadyToRestart;
     private int _updateOperationActive;
     private CancellationTokenSource? _updateCancellation;
     private string _updateStatusText = string.Empty;
@@ -489,19 +493,48 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private string? _piRuntimePackageSpec;
     private string? _piRuntimePackageDirectory;
     private string? _piRuntimeNpmCommand;
+    private ProcessStartInfo? _preparedUpdateStartInfo;
+    private string? _preparedAppStage;
+    private string? _preparedAppStageParent;
+    private string? _preparedPiStage;
+    private string? _preparedPiStageParent;
+    private bool _preparedUpdateSwapStarted;
+    private string _updateFailureMessage = string.Empty;
     private int _localDataRefreshVersion;
     public bool IsUpdatePopupOpen { get => _isUpdatePopupOpen; set { _isUpdatePopupOpen = value; OnPropertyChanged(); } }
     public bool IsUpdateCheckRunning { get => _isUpdateCheckRunning; private set { _isUpdateCheckRunning = value; OnPropertyChanged(); OnPropertyChanged(nameof(UpdateButtonVisibility)); OnPropertyChanged(nameof(CanApplyUpdate)); OnPropertyChanged(nameof(UpdateActionText)); OnPropertyChanged(nameof(UpdateAvailableText)); } }
-    public bool IsUpdateApplyRunning { get => _isUpdateApplyRunning; private set { _isUpdateApplyRunning = value; OnPropertyChanged(); OnPropertyChanged(nameof(CanApplyUpdate)); OnPropertyChanged(nameof(UpdateActionText)); } }
+    public bool IsUpdateApplyRunning { get => _isUpdateApplyRunning; private set { _isUpdateApplyRunning = value; OnPropertyChanged(); OnPropertyChanged(nameof(CanApplyUpdate)); OnPropertyChanged(nameof(UpdateActionText)); NotifyUpdateIndicatorState(); } }
+    public bool IsUpdateReadyToRestart { get => _isUpdateReadyToRestart; private set { _isUpdateReadyToRestart = value; OnPropertyChanged(); OnPropertyChanged(nameof(CanApplyUpdate)); OnPropertyChanged(nameof(UpdateActionText)); NotifyUpdateIndicatorState(); OnPropertyChanged(nameof(UpdateButtonVisibility)); } }
     public bool HasUpstreamUpdate { get => _hasUpstreamUpdate; private set { _hasUpstreamUpdate = value; OnPropertyChanged(); OnPropertyChanged(nameof(UpdateButtonVisibility)); OnPropertyChanged(nameof(CanApplyUpdate)); OnPropertyChanged(nameof(UpdateAvailableText)); } }
-    public Visibility UpdateButtonVisibility => HasUpstreamUpdate || IsUpdateCheckRunning ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility UpdateButtonVisibility => HasUpstreamUpdate || IsUpdateReadyToRestart ? Visibility.Visible : Visibility.Collapsed;
     public string UpdateStatusText { get => _updateStatusText; private set { _updateStatusText = value; OnPropertyChanged(); } }
     public string UpdateDetailText { get => _updateDetailText; private set { _updateDetailText = value; OnPropertyChanged(); } }
-    public string UpdateAvailableText => L("有更新", "Update");
-    public string UpdatePopupTitle => L("上游有更新", "Upstream update available");
-    public string UpdatePopupDescription => L("更新会从隔离工作树构建 ipi 上游或准备 Pi runtime package，不改动源码工作树；验证后自动切换并重启。", "This builds ipi upstream in an isolated worktree or stages a Pi runtime package without changing the source checkout, then verifies, swaps, and restarts.");
-    public string UpdateActionText => IsUpdateApplyRunning ? L("正在更新…", "Updating…") : IsUpdateCheckRunning ? L("检查中…", "Checking…") : L("一键更新", "Update now");
-    public bool CanApplyUpdate => HasUpstreamUpdate && !IsUpdateApplyRunning && !IsUpdateCheckRunning;
+    public string UpdateAvailableText => _hasUpdateCheckError && !HasUpstreamUpdate
+        ? L("检查失败", "Check failed")
+        : _hasExternalPiRuntimeUpdate && !_hasAppRepoUpdate && !_hasPiRuntimeUpdate
+            ? L("需要更新", "Update required")
+            : L("有更新", "Update");
+    public string UpdatePopupTitle => _hasExternalPiRuntimeUpdate && !_hasAppRepoUpdate && !_hasPiRuntimeUpdate
+        ? L("内核需要更新", "Core update required")
+        : L("上游有更新", "Upstream update available");
+    public string UpdatePopupDescription => _hasExternalPiRuntimeUpdate && !_hasAppRepoUpdate && !_hasPiRuntimeUpdate
+        ? L("已检测到新版 Pi。当前客户端仍使用外部运行时；为避免修改全局 package，请先迁移到 ipi managed runtime。", "A newer Pi version was detected. This client still uses an external runtime; migrate to the ipi managed runtime first so the global package is not modified.")
+        : L("更新会从隔离工作树构建 ipi 上游或准备 Pi runtime package，不改动源码工作树；验证后自动切换并重启。", "This builds ipi upstream in an isolated worktree or stages a Pi runtime package without changing the source checkout, then verifies, swaps, and restarts.");
+    public string UpdateActionText => IsUpdateApplyRunning ? L("正在下载更新…", "Downloading update…")
+        : IsUpdateReadyToRestart ? L("重新启动以完成更新", "Restart to finish updating")
+        : L("下载更新", "Download update");
+    public Visibility UpdateDownloadIconVisibility => !IsUpdateApplyRunning && !IsUpdateReadyToRestart ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility UpdateDownloadingIconVisibility => IsUpdateApplyRunning ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility UpdateRestartIconVisibility => IsUpdateReadyToRestart ? Visibility.Visible : Visibility.Collapsed;
+    public string UpdateFailureMessage { get => _updateFailureMessage; private set { _updateFailureMessage = value; OnPropertyChanged(); } }
+    public bool CanApplyUpdate => (IsUpdateReadyToRestart || _hasAppRepoUpdate || _hasPiRuntimeUpdate) && !IsUpdateApplyRunning && !IsUpdateCheckRunning;
+
+    private void NotifyUpdateIndicatorState()
+    {
+        OnPropertyChanged(nameof(UpdateDownloadIconVisibility));
+        OnPropertyChanged(nameof(UpdateDownloadingIconVisibility));
+        OnPropertyChanged(nameof(UpdateRestartIconVisibility));
+    }
 
     private bool _isSessionInfoPopupOpen;
     public bool IsSessionInfoPopupOpen { get => _isSessionInfoPopupOpen; set { _isSessionInfoPopupOpen = value; OnPropertyChanged(); } }
@@ -1030,6 +1063,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public void CancelActiveOperations()
     {
         if (_isDisposed) return;
+        if (!_preparedUpdateSwapStarted) DiscardPreparedUpdate();
         _isDisposed = true;
         _runElapsedTimer.Stop();
 
@@ -1081,6 +1115,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         UpdateDetailText = string.Empty;
         _hasAppRepoUpdate = false;
         _hasPiRuntimeUpdate = false;
+        _hasExternalPiRuntimeUpdate = false;
+        _hasUpdateCheckError = false;
         _updateRepoRoot = null;
         _updateUpstream = null;
         _piRuntimePackageSpec = null;
@@ -1090,63 +1126,84 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         var details = new List<string>();
         try
         {
-            var repoRoot = FindAppRepoRoot();
-            if (repoRoot is not null)
+            try
             {
-                await RunUpdateProcessAsync("git fetch", "git", new[] { "fetch", "--quiet" }, repoRoot, TimeSpan.FromMinutes(2), cancellationToken);
-                var upstream = (await RunUpdateProcessAsync("git upstream lookup", "git", new[] { "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}" }, repoRoot, TimeSpan.FromSeconds(30), cancellationToken)).Trim();
-                var upstreamCommit = (await RunUpdateProcessAsync("git upstream commit lookup", "git", new[] { "rev-parse", upstream }, repoRoot, TimeSpan.FromSeconds(30), cancellationToken)).Trim();
-                if (!IsGitCommitId(upstreamCommit)) throw new InvalidOperationException("upstream did not resolve to a full commit id");
-                var currentAppCommit = await ResolveCurrentAppSourceCommitAsync(repoRoot, cancellationToken);
-                var count = 0;
-                if (!string.Equals(currentAppCommit, upstreamCommit, StringComparison.OrdinalIgnoreCase))
+                var repoRoot = FindAppRepoRoot();
+                if (repoRoot is not null)
                 {
-                    var mergeBase = (await RunUpdateProcessAsync(
-                        "git app update ancestry check",
-                        "git",
-                        new[] { "merge-base", currentAppCommit, upstreamCommit },
-                        repoRoot,
-                        TimeSpan.FromSeconds(30),
-                        cancellationToken)).Trim();
-                    if (!string.Equals(mergeBase, currentAppCommit, StringComparison.OrdinalIgnoreCase))
-                        throw new InvalidOperationException("the configured upstream is not a fast-forward update of the installed app; refusing to downgrade or cross a rewritten history");
-                    var ahead = (await RunUpdateProcessAsync("git update count", "git", new[] { "rev-list", "--count", $"{currentAppCommit}..{upstreamCommit}" }, repoRoot, TimeSpan.FromSeconds(30), cancellationToken)).Trim();
-                    if (!int.TryParse(ahead, out count) || count <= 0)
-                        throw new InvalidOperationException("the fast-forward app update did not contain any new commits");
+                    await RunUpdateProcessAsync("git fetch", "git", new[] { "fetch", "--quiet" }, repoRoot, TimeSpan.FromMinutes(2), cancellationToken);
+                    var upstream = (await RunUpdateProcessAsync("git upstream lookup", "git", new[] { "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}" }, repoRoot, TimeSpan.FromSeconds(30), cancellationToken)).Trim();
+                    var upstreamCommit = (await RunUpdateProcessAsync("git upstream commit lookup", "git", new[] { "rev-parse", upstream }, repoRoot, TimeSpan.FromSeconds(30), cancellationToken)).Trim();
+                    if (!IsGitCommitId(upstreamCommit)) throw new InvalidOperationException("upstream did not resolve to a full commit id");
+                    var currentAppCommit = await ResolveCurrentAppSourceCommitAsync(repoRoot, cancellationToken);
+                    var count = 0;
+                    if (!string.Equals(currentAppCommit, upstreamCommit, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var mergeBase = (await RunUpdateProcessAsync(
+                            "git app update ancestry check",
+                            "git",
+                            new[] { "merge-base", currentAppCommit, upstreamCommit },
+                            repoRoot,
+                            TimeSpan.FromSeconds(30),
+                            cancellationToken)).Trim();
+                        if (!string.Equals(mergeBase, currentAppCommit, StringComparison.OrdinalIgnoreCase))
+                            throw new InvalidOperationException("the configured upstream is not a fast-forward update of the installed app; refusing to downgrade or cross a rewritten history");
+                        var ahead = (await RunUpdateProcessAsync("git update count", "git", new[] { "rev-list", "--count", $"{currentAppCommit}..{upstreamCommit}" }, repoRoot, TimeSpan.FromSeconds(30), cancellationToken)).Trim();
+                        if (!int.TryParse(ahead, out count) || count <= 0)
+                            throw new InvalidOperationException("the fast-forward app update did not contain any new commits");
+                    }
+                    _updateRepoRoot = repoRoot;
+                    _updateUpstream = upstream;
+                    _hasAppRepoUpdate = count > 0;
+                    details.Add(count > 0
+                        ? L($"ipi 应用：{upstream} 有 {count} 个新提交", $"ipi app: {count} upstream commit(s) available from {upstream}")
+                        : L($"ipi 应用：已是最新 ({upstream})", $"ipi app: already current ({upstream})"));
                 }
-                _updateRepoRoot = repoRoot;
-                _updateUpstream = upstream;
-                _hasAppRepoUpdate = count > 0;
-                details.Add(count > 0
-                    ? L($"ipi 应用：{upstream} 有 {count} 个新提交", $"ipi app: {count} upstream commit(s) available from {upstream}")
-                    : L($"ipi 应用：已是最新 ({upstream})", $"ipi app: already current ({upstream})"));
+                else
+                {
+                    details.Add(L("ipi 应用：未找到可用的 Git 上游", "ipi app: no Git upstream was found"));
+                }
             }
-            else
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                details.Add(L("ipi 应用：未找到可用的 Git 上游", "ipi app: no Git upstream was found"));
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _hasUpdateCheckError = true;
+                details.Add(L($"ipi 应用检查失败：{ex.Message}", $"ipi app check failed: {ex.Message}"));
             }
 
             var piUpdate = await CheckPiRuntimePackageUpdateAsync(cancellationToken);
             if (piUpdate is not null)
             {
                 _hasPiRuntimeUpdate = piUpdate.HasUpdate;
+                _hasExternalPiRuntimeUpdate = piUpdate.HasUpdate && !piUpdate.IsManaged;
                 _piRuntimePackageSpec = piUpdate.PackageSpec;
                 _piRuntimePackageDirectory = piUpdate.WorkingDirectory;
                 _piRuntimeNpmCommand = piUpdate.NpmCommand;
-                details.Add(piUpdate.HasUpdate
-                    ? L($"Pi runtime：{piUpdate.PackageName} {piUpdate.CurrentVersion} → {piUpdate.LatestVersion}", $"Pi runtime: {piUpdate.PackageName} {piUpdate.CurrentVersion} → {piUpdate.LatestVersion}")
-                    : L($"Pi runtime：已是最新 {piUpdate.PackageName} {piUpdate.CurrentVersion}", $"Pi runtime: already current {piUpdate.PackageName} {piUpdate.CurrentVersion}"));
+                details.Add(piUpdate.HasUpdate && !piUpdate.IsManaged
+                    ? L($"Pi runtime：{piUpdate.CurrentVersion} → {piUpdate.LatestVersion}；当前是外部运行时，ipi 不会自动修改它，请先迁移为 ipi managed runtime", $"Pi runtime: {piUpdate.CurrentVersion} → {piUpdate.LatestVersion}; this is an external runtime, so ipi will not modify it automatically. Migrate it to the ipi managed runtime first.")
+                    : piUpdate.HasUpdate
+                        ? L($"Pi runtime：{piUpdate.PackageName} {piUpdate.CurrentVersion} → {piUpdate.LatestVersion}", $"Pi runtime: {piUpdate.PackageName} {piUpdate.CurrentVersion} → {piUpdate.LatestVersion}")
+                        : L($"Pi runtime：已是最新 {piUpdate.PackageName} {piUpdate.CurrentVersion}", $"Pi runtime: already current {piUpdate.PackageName} {piUpdate.CurrentVersion}"));
             }
             else
             {
                 details.Add(L("Pi runtime：未找到带 ipi ownership marker 的 managed runtime；不会自动修改全局 package", "Pi runtime: no ipi-owned managed runtime found; global packages will not be modified automatically"));
             }
 
-            HasUpstreamUpdate = _hasAppRepoUpdate || _hasPiRuntimeUpdate;
+            HasUpstreamUpdate = _hasAppRepoUpdate || _hasPiRuntimeUpdate || _hasExternalPiRuntimeUpdate;
             UpdateStatusText = HasUpstreamUpdate
                 ? L("上游有更新。", "Upstream update available.")
                 : L("当前已是最新。", "Already up to date.");
             UpdateDetailText = string.Join(Environment.NewLine, details);
+            OnPropertyChanged(nameof(UpdateButtonVisibility));
+            OnPropertyChanged(nameof(CanApplyUpdate));
+            OnPropertyChanged(nameof(UpdateAvailableText));
+            OnPropertyChanged(nameof(UpdatePopupTitle));
+            OnPropertyChanged(nameof(UpdatePopupDescription));
+            OnPropertyChanged(nameof(UpdateActionText));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -1162,8 +1219,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             if (!_isDisposed)
             {
                 HasUpstreamUpdate = false;
+                _hasUpdateCheckError = true;
                 UpdateStatusText = L("检查更新失败。", "Update check failed.");
                 UpdateDetailText = string.Join(Environment.NewLine, details.Concat(new[] { ex.Message }));
+                OnPropertyChanged(nameof(UpdateButtonVisibility));
+                OnPropertyChanged(nameof(UpdateAvailableText));
+                OnPropertyChanged(nameof(UpdatePopupTitle));
+                OnPropertyChanged(nameof(UpdatePopupDescription));
+                OnPropertyChanged(nameof(UpdateActionText));
             }
         }
         finally
@@ -1177,7 +1240,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public async Task ApplyAppUpdateAsync()
     {
-        if (_isDisposed || !CanApplyUpdate || Interlocked.CompareExchange(ref _updateOperationActive, 1, 0) != 0) return;
+        if (_isDisposed || IsUpdateReadyToRestart || !CanApplyUpdate || Interlocked.CompareExchange(ref _updateOperationActive, 1, 0) != 0) return;
         var updateCancellation = new CancellationTokenSource();
         _updateCancellation = updateCancellation;
         var cancellationToken = updateCancellation.Token;
@@ -1185,9 +1248,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         string? appStageParent = null;
         string? piStage = null;
         string? piStageParent = null;
+        string? runtimeConfigBackup = null;
         string? sourceStage = null;
         string? sourceStageParent = null;
         var swapStarted = false;
+        UpdateFailureMessage = string.Empty;
         IsUpdateApplyRunning = true;
         try
         {
@@ -1208,6 +1273,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             var repoRoot = _updateRepoRoot;
             var upstream = _updateUpstream;
             var bootstrap = new RuntimeBootstrapService();
+            var piRequiresMigration = _hasExternalPiRuntimeUpdate;
+            var runtimeConfigIsNew = false;
+            var piIsNewInstall = false;
             string? preparedUpstreamHead = null;
             var sourceWorktreeAdded = false;
 
@@ -1292,19 +1360,43 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
                 if (_hasPiRuntimeUpdate)
                 {
-                    if (!TryParseExactPiPackageSpec(_piRuntimePackageSpec, out var packageName, out var expectedVersion)
-                        || !PathsEqual(_piRuntimePackageDirectory, bootstrap.ManagedPiRuntimeDir)
-                        || !PathsEqual(_piRuntimeNpmCommand, bootstrap.ManagedNpmCmd)
-                        || !bootstrap.IsManagedPiRuntimeOwned(_pi.RuntimeInfo.PiCodingAgentRoot))
+                    if (!TryParseExactPiPackageSpec(_piRuntimePackageSpec, out var packageName, out var expectedVersion))
+                    {
+                        throw new InvalidOperationException("the recorded Pi runtime update is no longer valid");
+                    }
+                    if (piRequiresMigration)
+                    {
+                        if (!bootstrap.TryEnsureManagedRuntimeOwnership())
+                            throw new InvalidOperationException("ipi could not prepare its managed runtime directory");
+                        if (string.IsNullOrWhiteSpace(_piRuntimeNpmCommand)
+                            || !Path.IsPathFullyQualified(_piRuntimeNpmCommand)
+                            || !File.Exists(_piRuntimeNpmCommand))
+                            throw new InvalidOperationException("npm is unavailable for the Pi runtime update");
+                    }
+                    else if (!PathsEqual(_piRuntimePackageDirectory, bootstrap.ManagedPiRuntimeDir)
+                             || !PathsEqual(_piRuntimeNpmCommand, bootstrap.ManagedNpmCmd)
+                             || !bootstrap.IsManagedPiRuntimeOwned(_pi.RuntimeInfo.PiCodingAgentRoot)
+                             || !File.Exists(bootstrap.ManagedNpmCmd))
                     {
                         throw new InvalidOperationException("the recorded ipi-owned Pi runtime update is no longer valid");
                     }
-                    if (!File.Exists(bootstrap.ManagedNpmCmd)) throw new FileNotFoundException("managed npm command is missing", bootstrap.ManagedNpmCmd);
+
+                    var npmCommand = _piRuntimeNpmCommand!;
                     piStageParent = Path.GetFullPath(bootstrap.ManagedRuntimeDir);
                     EnsureUpdateDirectoryTreeIsSafe(piStageParent, "managed runtime root");
-                    EnsureUpdateDirectoryTreeIsSafe(bootstrap.ManagedPiRuntimeDir, "managed Pi root");
+                    piIsNewInstall = !Directory.Exists(bootstrap.ManagedPiRuntimeDir);
+                    if (!piIsNewInstall) EnsureUpdateDirectoryTreeIsSafe(bootstrap.ManagedPiRuntimeDir, "managed Pi root");
                     piStage = CreateRandomUpdateSibling(piStageParent, ".ipi-pi-staging-", nonce);
                     piBackup = CreateRandomUpdateSibling(piStageParent, ".ipi-pi-backup-", nonce);
+                    if (piRequiresMigration)
+                    {
+                        var runtimeConfigParent = Path.GetDirectoryName(bootstrap.RuntimeConfigPath)
+                                                  ?? throw new InvalidOperationException("runtime config has no parent directory");
+                        EnsureUpdateDirectoryTreeIsSafe(runtimeConfigParent, "runtime config parent");
+                        runtimeConfigIsNew = !File.Exists(bootstrap.RuntimeConfigPath);
+                        if (!runtimeConfigIsNew)
+                            runtimeConfigBackup = CreateRandomUpdateSibling(runtimeConfigParent, ".ipi-runtime-config-backup-", nonce);
+                    }
                     Directory.CreateDirectory(piStage);
                     EnsurePreparedUpdateStage(piStage, piStageParent, ".ipi-pi-staging-", "Pi staging");
 
@@ -1324,8 +1416,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                     UpdateStatusText = L("正在准备新的 managed Pi runtime…", "Preparing the new managed Pi runtime…");
                     await RunUpdateProcessAsync(
                         "managed npm install",
-                        bootstrap.ManagedNpmCmd,
-                        new[] { "install", "--ignore-scripts", "--no-audit", "--no-fund", "--save-exact", "--package-lock=false", _piRuntimePackageSpec! },
+                        npmCommand,
+                        new[] { "install", "--ignore-scripts", "--no-audit", "--no-fund", "--offline=false", "--prefer-offline=false", "--save-exact", "--package-lock=false", _piRuntimePackageSpec! },
                         piStage,
                         TimeSpan.FromMinutes(10),
                         cancellationToken);
@@ -1398,6 +1490,22 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 startInfo.ArgumentList.Add(piStage!);
                 startInfo.ArgumentList.Add("-PiBackup");
                 startInfo.ArgumentList.Add(piBackup!);
+                if (piIsNewInstall) startInfo.ArgumentList.Add("-PiIsNewInstall");
+                if (piRequiresMigration)
+                {
+                    startInfo.ArgumentList.Add("-SwitchRuntimeConfig");
+                    startInfo.ArgumentList.Add("-RuntimeConfigPath");
+                    startInfo.ArgumentList.Add(bootstrap.RuntimeConfigPath);
+                    if (runtimeConfigIsNew)
+                    {
+                        startInfo.ArgumentList.Add("-RuntimeConfigIsNew");
+                    }
+                    else
+                    {
+                        startInfo.ArgumentList.Add("-RuntimeConfigBackup");
+                        startInfo.ArgumentList.Add(runtimeConfigBackup!);
+                    }
+                }
             }
 
             if (_hasAppRepoUpdate)
@@ -1407,12 +1515,15 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 UpdateStatusText = L("应用构建已验证，正在启动切换…", "App build verified; starting the swap…");
             }
 
-            var swapProcess = Process.Start(startInfo) ?? throw new InvalidOperationException("failed to start the detached update swap");
-            swapProcess.Dispose();
+            _preparedUpdateStartInfo = startInfo;
+            _preparedAppStage = appStage;
+            _preparedAppStageParent = appStageParent;
+            _preparedPiStage = piStage;
+            _preparedPiStageParent = piStageParent;
             swapStarted = true;
-            UpdateStatusText = L("更新已准备完成，正在安全切换并重启…", "Update prepared; safely swapping and restarting…");
+            IsUpdateReadyToRestart = true;
+            UpdateStatusText = L("更新已下载，重新启动以完成更新。", "Update downloaded. Restart to finish updating.");
             UpdateDetailText = logPath;
-            Application.Current.Shutdown();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -1428,6 +1539,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             {
                 UpdateStatusText = L("更新准备失败，ipi 保持运行。", "Update preparation failed; ipi remains open.");
                 UpdateDetailText = ex.Message;
+                UpdateFailureMessage = L("更新下载失败，请稍后重试。", "The update could not be downloaded. Please try again.");
             }
         }
         finally
@@ -1445,29 +1557,59 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    public void RestartToApplyPreparedUpdate()
+    {
+        if (_isDisposed || !IsUpdateReadyToRestart || _preparedUpdateStartInfo is null) return;
+        try
+        {
+            var swapProcess = Process.Start(_preparedUpdateStartInfo) ?? throw new InvalidOperationException("failed to start the detached update swap");
+            swapProcess.Dispose();
+            _preparedUpdateSwapStarted = true;
+            UpdateFailureMessage = string.Empty;
+            UpdateStatusText = L("正在重新启动以完成更新…", "Restarting to finish the update…");
+            Application.Current.Shutdown();
+        }
+        catch
+        {
+            UpdateFailureMessage = L("无法重新启动更新，请再试一次。", "The update could not restart. Please try again.");
+        }
+    }
+
+    private void DiscardPreparedUpdate()
+    {
+        TryDeletePreparedUpdateStage(_preparedAppStage, _preparedAppStageParent, ".ipi-app-staging-");
+        TryDeletePreparedUpdateStage(_preparedPiStage, _preparedPiStageParent, ".ipi-pi-staging-");
+        _preparedUpdateStartInfo = null;
+        _preparedAppStage = null;
+        _preparedAppStageParent = null;
+        _preparedPiStage = null;
+        _preparedPiStageParent = null;
+        IsUpdateReadyToRestart = false;
+    }
+
     private async Task<PiRuntimePackageUpdate?> CheckPiRuntimePackageUpdateAsync(CancellationToken cancellationToken)
     {
         var runtimeRoot = _pi.RuntimeInfo.PiCodingAgentRoot;
         if (string.IsNullOrWhiteSpace(runtimeRoot)) return null;
         var bootstrap = new RuntimeBootstrapService();
-        if (!bootstrap.IsManagedPiRuntimeOwned(runtimeRoot)) return null;
-        if (!File.Exists(bootstrap.ManagedNpmCmd)) return null;
+        var isManaged = bootstrap.IsManagedPiRuntimeOwned(runtimeRoot);
+        var npmCommand = isManaged && File.Exists(bootstrap.ManagedNpmCmd)
+            ? bootstrap.ManagedNpmCmd
+            : ResolveExecutableOnPath(OperatingSystem.IsWindows() ? "npm.cmd" : "npm");
+        var workingDirectory = isManaged ? bootstrap.ManagedPiRuntimeDir : runtimeRoot;
 
         var currentAgent = ReadPackageVersion(runtimeRoot);
-        var latestAgent = await QueryNpmPackageVersionAsync(
-            "@earendil-works/pi-coding-agent",
-            bootstrap.ManagedNpmCmd,
-            bootstrap.ManagedPiRuntimeDir,
-            cancellationToken);
+        var latestAgent = await QueryNpmPackageVersionAsync("@earendil-works/pi-coding-agent", cancellationToken);
         if (string.IsNullOrWhiteSpace(currentAgent) || string.IsNullOrWhiteSpace(latestAgent)) return null;
         return new PiRuntimePackageUpdate(
             "@earendil-works/pi-coding-agent",
             $"@earendil-works/pi-coding-agent@{latestAgent}",
-            bootstrap.ManagedPiRuntimeDir,
-            bootstrap.ManagedNpmCmd,
+            workingDirectory,
+            npmCommand,
             currentAgent,
             latestAgent,
-            IsPackageVersionNewer(latestAgent, currentAgent));
+            IsPackageVersionNewer(latestAgent, currentAgent),
+            isManaged);
     }
 
     private static bool IsGitCommitId(string? value)
@@ -1546,13 +1688,53 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         catch { return string.Empty; }
     }
 
-    private static async Task<string> QueryNpmPackageVersionAsync(string packageName, string npmCommand, string workingDirectory, CancellationToken cancellationToken)
-        => (await RunUpdateProcessAsync("npm version lookup", npmCommand, new[] { "view", packageName, "version" }, workingDirectory, TimeSpan.FromMinutes(1), cancellationToken)).Trim();
+    private static async Task<string> QueryNpmPackageVersionAsync(string packageName, CancellationToken cancellationToken)
+    {
+        if (!packageName.Equals("@earendil-works/pi-coding-agent", StringComparison.Ordinal))
+            throw new InvalidOperationException("unsupported Pi update package");
+
+        var escapedPackageName = Uri.EscapeDataString(packageName);
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"https://registry.npmjs.org/{escapedPackageName}/latest");
+        request.Headers.Accept.ParseAdd("application/json");
+        request.Headers.UserAgent.ParseAdd("ipi-update-check/0.1");
+
+        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(1) };
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        var version = document.RootElement.TryGetProperty("version", out var versionElement)
+            && versionElement.ValueKind == JsonValueKind.String
+            ? versionElement.GetString()?.Trim() ?? string.Empty
+            : string.Empty;
+        if (!Regex.IsMatch(version, "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$", RegexOptions.CultureInvariant))
+            throw new InvalidDataException("npm registry returned an invalid Pi version");
+        return version;
+    }
 
     private static bool IsPackageVersionNewer(string latest, string current)
     {
         if (Version.TryParse(latest, out var latestVersion) && Version.TryParse(current, out var currentVersion)) return latestVersion > currentVersion;
         return !latest.Equals(current, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ResolveExecutableOnPath(string executableName)
+    {
+        if (Path.IsPathFullyQualified(executableName) && File.Exists(executableName)) return Path.GetFullPath(executableName);
+        foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
+                     .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            try
+            {
+                var candidate = Path.GetFullPath(Path.Combine(directory, executableName));
+                if (File.Exists(candidate)) return candidate;
+            }
+            catch
+            {
+                // Ignore malformed PATH entries and continue to the next one.
+            }
+        }
+        throw new FileNotFoundException($"Unable to locate {executableName} on PATH");
     }
 
     private static bool IsExactPiPackageSpec(string? packageSpec)
@@ -1692,7 +1874,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         return match ?? throw new FileNotFoundException("ipi update swap script is missing");
     }
 
-    private sealed record PiRuntimePackageUpdate(string PackageName, string PackageSpec, string WorkingDirectory, string NpmCommand, string CurrentVersion, string LatestVersion, bool HasUpdate);
+    private sealed record PiRuntimePackageUpdate(string PackageName, string PackageSpec, string WorkingDirectory, string NpmCommand, string CurrentVersion, string LatestVersion, bool HasUpdate, bool IsManaged);
 
     private static string? FindAppRepoRoot()
     {
