@@ -12,6 +12,11 @@
     <InformationalVersion>0.1.3-beta.5</InformationalVersion>
     <ApplicationIcon>Assets\Brand\app\ipi-icon.ico</ApplicationIcon>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)=/_/apps/windows/Ipi.Desktop</PathMap>
+  </PropertyGroup>
   <ItemGroup>
     <None Include="agent-bridge.mjs" CopyToOutputDirectory="PreserveNewest" />
     <None Include="approval-router.mjs" CopyToOutputDirectory="PreserveNewest" />
