@@ -59,8 +59,8 @@ The result is a desktop agent system that is:
 
 Download the latest beta from **Releases**:
 
-- `ipi-Setup-0.1.3-beta.5-win-x64.exe` — Windows installer
-- `ipi-portable-0.1.3-beta.5-win-x64.zip` — portable zip
+- `ipi-Setup-0.1.3-beta.6-win-x64.exe` — Windows installer
+- `ipi-portable-0.1.3-beta.6-win-x64.zip` — portable zip
 
 The Windows builds are self-contained, so you do **not** need to install the .NET Desktop Runtime separately.
 

@@ -1,18 +1,14 @@
-# ipi v0.1.3-beta.5 Release Notes
+# ipi v0.1.3-beta.6 Release Notes
 
 ipi is an independent, unofficial native Windows desktop app for local agent workflows, starting with Pi. It is not affiliated with or endorsed by Pi, Codex, Claude Code, OpenAI, Anthropic, Google, or any model provider.
 
 This beta is focused on one thing: a clean, simple desktop foundation for local agent work.
 
-## What's new in v0.1.3-beta.5
+## What's new in v0.1.3-beta.6
 
-- new ipi-managed installations now use upstream Pi `0.84.1`;
-- ipi detects newer Pi runtime releases and exposes a compact one-click download control;
-- a verified runtime update is activated on restart;
-- legacy external Pi runtimes can migrate to the ipi-managed runtime without modifying global npm packages;
-- managed Pi runtimes without a bundled npm can update through a validated system npm executable;
+- fixed Pi runtime updates for managed installations that use a validated system npm executable instead of a bundled npm;
 - update failures now show the underlying preparation error instead of only a generic retry message;
-- failed update staging is cleaned automatically instead of causing repeated downloads.
+- includes the Pi `0.84.1` runtime baseline, automatic update detection, verified restart activation, external-runtime migration, and staging cleanup introduced in beta.5.
 
 ## What this beta includes
 
