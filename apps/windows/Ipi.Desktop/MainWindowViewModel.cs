@@ -1374,9 +1374,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                             throw new InvalidOperationException("npm is unavailable for the Pi runtime update");
                     }
                     else if (!PathsEqual(_piRuntimePackageDirectory, bootstrap.ManagedPiRuntimeDir)
-                             || !PathsEqual(_piRuntimeNpmCommand, bootstrap.ManagedNpmCmd)
                              || !bootstrap.IsManagedPiRuntimeOwned(_pi.RuntimeInfo.PiCodingAgentRoot)
-                             || !File.Exists(bootstrap.ManagedNpmCmd))
+                             || string.IsNullOrWhiteSpace(_piRuntimeNpmCommand)
+                             || !Path.IsPathFullyQualified(_piRuntimeNpmCommand)
+                             || !File.Exists(_piRuntimeNpmCommand))
                     {
                         throw new InvalidOperationException("the recorded ipi-owned Pi runtime update is no longer valid");
                     }
@@ -1539,7 +1540,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             {
                 UpdateStatusText = L("更新准备失败，ipi 保持运行。", "Update preparation failed; ipi remains open.");
                 UpdateDetailText = ex.Message;
-                UpdateFailureMessage = L("更新下载失败，请稍后重试。", "The update could not be downloaded. Please try again.");
+                UpdateFailureMessage = L($"更新下载失败：{ex.Message}", $"The update could not be downloaded: {ex.Message}");
             }
         }
         finally

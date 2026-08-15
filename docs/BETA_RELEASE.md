@@ -10,6 +10,8 @@ This beta is focused on one thing: a clean, simple desktop foundation for local 
 - ipi detects newer Pi runtime releases and exposes a compact one-click download control;
 - a verified runtime update is activated on restart;
 - legacy external Pi runtimes can migrate to the ipi-managed runtime without modifying global npm packages;
+- managed Pi runtimes without a bundled npm can update through a validated system npm executable;
+- update failures now show the underlying preparation error instead of only a generic retry message;
 - failed update staging is cleaned automatically instead of causing repeated downloads.
 
 ## What this beta includes
